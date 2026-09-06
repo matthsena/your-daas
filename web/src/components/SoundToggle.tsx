@@ -43,6 +43,15 @@ export function SoundToggle() {
   const [hostInId, setHostInId] = useState("");
   const [hostOutId, setHostOutId] = useState("");
   const live = useRef<Live | null>(null);
+  const gen = useRef(0);
+
+  // A dismissed mic-permission prompt never settles in Chrome, so every
+  // await here needs a timeout — otherwise the toggle hangs with no feedback.
+  const withTimeout = <T,>(p: Promise<T>, ms: number, label: string): Promise<T> =>
+    Promise.race([
+      p,
+      new Promise<T>((_, reject) => setTimeout(() => reject(new Error(label)), ms)),
+    ]);
 
   const loadDevices = async () => {
     try {
@@ -173,41 +182,66 @@ export function SoundToggle() {
 
   const toggle = async () => {
     if (live.current) {
+      gen.current += 1;
       stop();
       setOn(false);
       setNote("Turn the remote sound on/off");
       return;
     }
-    // Speaker and mic are independent: one may work without the other.
-    const problems: string[] = [];
+    const g = ++gen.current;
+    const alive = () => gen.current === g && !live.current;
+    // Speaker first: commit ON as soon as it works, attach the mic after.
     let out: { ws: WebSocket; audio: HTMLAudioElement; urls: string[] } | null = null;
-    let mic: { ws: WebSocket; stream: MediaStream; ctx: AudioContext; urls: string[] } | null = null;
     try {
-      out = await startOut();
+      out = await withTimeout(startOut(), 10000, "speaker timeout");
     } catch {
-      problems.push("no speaker");
+      out = null;
     }
-    try {
-      mic = await startMic(hostInId || undefined);
-    } catch {
-      problems.push("no mic");
-    }
-    if (!out && !mic) {
-      setNote("Sound unavailable — check the connection and mic permission");
+    if (!alive()) {
+      if (out) {
+        out.ws.close();
+        out.urls.forEach((u) => URL.revokeObjectURL(u));
+      }
       return;
     }
     live.current = {
       outWs: out ? out.ws : null,
-      micWs: mic ? mic.ws : null,
+      micWs: null,
       audio: out ? out.audio : new Audio(),
-      urls: [...(out ? out.urls : []), ...(mic ? mic.urls : [])],
-      stream: mic ? mic.stream : null,
-      ctx: mic ? mic.ctx : null,
+      urls: out ? [...out.urls] : [],
+      stream: null,
+      ctx: null,
     };
     setOn(true);
-    setNote(problems.length ? `On (${problems.join(", ")} unavailable)` : "Remote sound is on");
+    setNote(out ? "Remote sound is on (mic…)" : "Speaker unavailable (mic…)");
     // Mic permission (if granted) unlocks real device labels.
     void refreshHostDevices();
+    // Mic attaches in the background: a dismissed permission prompt must
+    // never block the speaker, which is already playing.
+    try {
+      const mic = await withTimeout(startMic(hostInId || undefined), 20000, "mic timeout");
+      if (gen.current !== g || !live.current) {
+        mic.ws.close();
+        mic.stream.getTracks().forEach((t) => t.stop());
+        void mic.ctx.close().catch(() => undefined);
+        return;
+      }
+      live.current.micWs = mic.ws;
+      live.current.stream = mic.stream;
+      live.current.ctx = mic.ctx;
+      live.current.urls.push(...mic.urls);
+      setNote(out ? "Remote sound is on" : "On (mic only)");
+      void refreshHostDevices();
+    } catch {
+      if (gen.current === g && live.current) {
+        setNote(out ? "Remote sound is on (no mic)" : "Sound unavailable — check mic permission");
+        if (!out) {
+          gen.current += 1;
+          stop();
+          setOn(false);
+        }
+      }
+    }
   };
 
   const changeVolume = (v: number) => {
