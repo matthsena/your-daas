@@ -57,5 +57,16 @@ The file API exposes PulseAudio controls (same loopback-only posture):
 - `POST /api/audio/default {"kind","name"}` → switches the default **and
   moves live streams** so apps follow immediately.
 
+Two device levels (don't confuse them):
+
+- **Physical endpoints (native OS)** — what the menu selects show. Output
+  uses the browser's device list + `setSinkId()` on the `<audio>` element;
+  input picks the host mic via `deviceId` in `getUserMedia()` (changing it
+  rebuilds the mic chain live). Real labels appear after mic permission is
+  granted; before that, generic `Speaker N` / `Microphone N` entries.
+- **Remote routing (Linux)** — stays on the API above. The volume slider
+  drives the default Linux sink; the default source is the virtual mic fed
+  by the browser. Use the API directly for exotic routing (e.g. monitor-as-mic).
+
 The rail menu renders a volume slider plus Output/Input selects from these
 endpoints; the slider drives the selected output sink.

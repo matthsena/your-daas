@@ -2,9 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   audioUrl,
   listAudioDevices,
-  setAudioDefault,
   setAudioVolume,
-  type AudioDevice,
 } from "../api";
 
 const MIC_WORKLET = `
@@ -36,44 +34,71 @@ interface Live {
 export function SoundToggle() {
   const [on, setOn] = useState(false);
   const [note, setNote] = useState("Turn the remote sound on/off");
-  const [sinks, setSinks] = useState<AudioDevice[]>([]);
-  const [sources, setSources] = useState<AudioDevice[]>([]);
+  // Remote plumbing (Linux side): only the volume target matters here.
   const [outName, setOutName] = useState("");
-  const [inName, setInName] = useState("");
   const [volume, setVolume] = useState(100);
+  // Physical endpoints (native OS side, via the browser).
+  const [hostIns, setHostIns] = useState<MediaDeviceInfo[]>([]);
+  const [hostOuts, setHostOuts] = useState<MediaDeviceInfo[]>([]);
+  const [hostInId, setHostInId] = useState("");
+  const [hostOutId, setHostOutId] = useState("");
   const live = useRef<Live | null>(null);
 
   const loadDevices = async () => {
     try {
       const dev = await listAudioDevices();
-      setSinks(dev.sinks);
-      setSources(dev.sources);
       const out = dev.sinks.find((d) => d.default) ?? dev.sinks[0];
-      const inp = dev.sources.find((d) => d.default) ?? dev.sources[0];
       if (out) {
         setOutName(out.name);
         setVolume(out.volume);
       }
-      if (inp) setInName(inp.name);
     } catch {
       /* audio service unreachable; toggle will report it */
     }
   };
 
+  const refreshHostDevices = async () => {
+    try {
+      const all = await navigator.mediaDevices.enumerateDevices();
+      setHostIns(all.filter((d) => d.kind === "audioinput"));
+      setHostOuts(all.filter((d) => d.kind === "audiooutput"));
+    } catch {
+      /* ignore */
+    }
+  };
+
   useEffect(() => {
     void loadDevices();
+    void refreshHostDevices();
   }, []);
 
+  useEffect(() => {
+    if (!on) return;
+    const refresh = () => void refreshHostDevices();
+    navigator.mediaDevices.addEventListener("devicechange", refresh);
+    return () => navigator.mediaDevices.removeEventListener("devicechange", refresh);
+  }, [on ]);
+
+  const stopMicChain = () => {
+    const cur = live.current;
+    try { cur?.micWs?.close(); } catch { /* ignore */ }
+    cur?.stream?.getTracks().forEach((t) => t.stop());
+    void cur?.ctx?.close().catch(() => undefined);
+    if (cur) {
+      cur.micWs = null;
+      cur.stream = null;
+      cur.ctx = null;
+    }
+  };
+
   const stop = () => {
+    stopMicChain();
     const cur = live.current;
     live.current = null;
     if (!cur) return;
     try { cur.outWs?.close(); } catch { /* ignore */ }
-    try { cur.micWs?.close(); } catch { /* ignore */ }
     cur.audio.pause();
     cur.urls.forEach((u) => URL.revokeObjectURL(u));
-    cur.stream?.getTracks().forEach((t) => t.stop());
-    void cur.ctx?.close().catch(() => undefined);
   };
 
   const startOut = async (): Promise<{ ws: WebSocket; audio: HTMLAudioElement; urls: string[] }> => {
@@ -114,9 +139,15 @@ export function SoundToggle() {
     return { ws, audio, urls };
   };
 
-  const startMic = async (): Promise<{ ws: WebSocket; stream: MediaStream; ctx: AudioContext; urls: string[] }> => {
+  const startMic = async (deviceId?: string): Promise<{ ws: WebSocket; stream: MediaStream; ctx: AudioContext; urls: string[] }> => {
     const stream = await navigator.mediaDevices.getUserMedia({
-      audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true },
+      audio: {
+        sampleRate: 16000,
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+        ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
+      },
     });
     const ctx = new AudioContext({ sampleRate: 16000 });
     const urls = [URL.createObjectURL(new Blob([MIC_WORKLET], { type: "application/javascript" }))];
@@ -157,7 +188,7 @@ export function SoundToggle() {
       problems.push("no speaker");
     }
     try {
-      mic = await startMic();
+      mic = await startMic(hostInId || undefined);
     } catch {
       problems.push("no mic");
     }
@@ -175,6 +206,8 @@ export function SoundToggle() {
     };
     setOn(true);
     setNote(problems.length ? `On (${problems.join(", ")} unavailable)` : "Remote sound is on");
+    // Mic permission (if granted) unlocks real device labels.
+    void refreshHostDevices();
   };
 
   const changeVolume = (v: number) => {
@@ -182,13 +215,37 @@ export function SoundToggle() {
     if (outName) void setAudioVolume("sink", outName, v).catch(() => undefined);
   };
 
-  const changeDefault = async (kind: "sink" | "source", name: string) => {
-    if (!name) return;
+  const changeHostInput = async (id: string) => {
+    setHostInId(id);
+    if (!live.current) return; // applies when sound is toggled on
+    stopMicChain();
     try {
-      await setAudioDefault(kind, name);
-      await loadDevices();
+      const mic = await startMic(id || undefined);
+      if (!live.current) {
+        mic.ws.close();
+        mic.stream.getTracks().forEach((t) => t.stop());
+        void mic.ctx.close().catch(() => undefined);
+        return;
+      }
+      live.current.micWs = mic.ws;
+      live.current.stream = mic.stream;
+      live.current.ctx = mic.ctx;
+      live.current.urls.push(...mic.urls);
+      setNote("Remote sound is on");
     } catch {
-      /* keep previous selection */
+      setNote("Mic unavailable — remote sound stays on without it");
+    }
+  };
+
+  const changeHostOut = async (id: string) => {
+    setHostOutId(id);
+    const audio = live.current?.audio;
+    if (audio && typeof audio.setSinkId === "function") {
+      try {
+        await audio.setSinkId(id);
+      } catch {
+        /* device refused; output stays where it was */
+      }
     }
   };
 
@@ -210,37 +267,31 @@ export function SoundToggle() {
         <span className="sound-val">{volume}</span>
       </label>
       <label className="sound-row">
-        <span>Output</span>
+        <span>Output (this PC)</span>
         <select
-          aria-label="Output device"
-          value={outName}
-          onChange={(e) => {
-            setOutName(e.target.value);
-            const dev = sinks.find((d) => d.name === e.target.value);
-            if (dev) setVolume(dev.volume);
-            void changeDefault("sink", e.target.value);
-          }}
+          aria-label="Output device (this PC)"
+          value={hostOutId}
+          onChange={(e) => void changeHostOut(e.target.value)}
         >
-          {sinks.map((d) => (
-            <option key={d.name} value={d.name}>
-              {d.description}
+          <option value="">Default</option>
+          {hostOuts.map((d, i) => (
+            <option key={d.deviceId} value={d.deviceId}>
+              {d.label || `Speaker ${i + 1}`}
             </option>
           ))}
         </select>
       </label>
       <label className="sound-row">
-        <span>Input</span>
+        <span>Input (this PC)</span>
         <select
-          aria-label="Input device"
-          value={inName}
-          onChange={(e) => {
-            setInName(e.target.value);
-            void changeDefault("source", e.target.value);
-          }}
+          aria-label="Input device (this PC)"
+          value={hostInId}
+          onChange={(e) => void changeHostInput(e.target.value)}
         >
-          {sources.map((d) => (
-            <option key={d.name} value={d.name}>
-              {d.description}
+          <option value="">Default</option>
+          {hostIns.map((d, i) => (
+            <option key={d.deviceId} value={d.deviceId}>
+              {d.label || `Microphone ${i + 1}`}
             </option>
           ))}
         </select>
