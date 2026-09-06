@@ -38,6 +38,7 @@ interface MicLive {
 export function SoundToggle() {
   // Speaker and mic are fully independent channels.
   const [outState, setOutState] = useState<"off" | "starting" | "on">("off");
+  const [outErr, setOutErr] = useState("");
   const [micOn, setMicOn] = useState(false);
   const [micNote, setMicNote] = useState("Turn the microphone on/off");
   // Remote plumbing (Linux side): only the volume target matters here.
@@ -153,9 +154,19 @@ export function SoundToggle() {
     if (a.paused) void a.play().catch(() => undefined);
   };
 
+  const describeOutErr = (e: unknown): string => {
+    const m = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+    if (/NotAllowedError|didn't interact/i.test(m))
+      return "Blocked: click anywhere on the page, then Sound";
+    if (/audio channel|speaker timeout/i.test(m))
+      return "Audio channel unreachable — is the stack running?";
+    return `Sound failed: ${m.slice(0, 80)}`;
+  };
+
   const enableOut = async (myGen: number) => {
     if (outRef.current) return;
     setOutState("starting");
+    setOutErr("");
     // The socket exists before playback starts: sweep it on every exit
     // path (timeout, stale generation) or its ffmpeg leaks server-side.
     const attempt: { ws: WebSocket | null } = { ws: null };
@@ -168,8 +179,9 @@ export function SoundToggle() {
     let parts: OutLive | null = null;
     try {
       parts = await withTimeout(startOut(attempt), 10000, "speaker timeout");
-    } catch {
+    } catch (e) {
       parts = null;
+      if (gen.current === myGen) setOutErr(describeOutErr(e));
     }
     if (!parts || gen.current !== myGen || outRef.current) {
       sweep();
@@ -333,6 +345,7 @@ export function SoundToggle() {
       >
         {outState === "on" ? "Sound on" : outState === "starting" ? "Sound…" : "Sound off"}
       </button>
+      {outErr && <span className="sound-err">{outErr}</span>}
       <button type="button" onClick={toggleMic} title={micNote} aria-pressed={micOn}>
         {micOn ? "Mic on" : "Mic off"}
       </button>
