@@ -83,7 +83,9 @@ if command -v dconf >/dev/null 2>&1; then
 fi
 plank >/tmp/yourdaas/plank.log 2>&1 &
 
+# Throughput-tuned for motion: tight poll + minimal defer (see docs/VIDEO.md).
 x11vnc -display :1 -forever -shared -nopw -listen 127.0.0.1 -rfbport 5900 -xkb -ncache 0 \
+  -deferupdate 5 -wait 5 -threads \
   >/tmp/yourdaas/x11vnc.log 2>&1 &
 
 NOVNC_ROOT=/usr/share/novnc
