@@ -2,7 +2,7 @@
 <html lang="pt-BR">
   <head>
     <meta charset="utf-8" />
-    <title>Premissa computer</title>
+    <title>YourDaaS computer</title>
     <style>
       html,
       body,
@@ -89,12 +89,12 @@
       rfb.viewOnly = flag("view_only");
       rfb.scaleViewport = true;
       rfb.clipViewport = false;
-      rfb.addEventListener("connect", () => show("conectado"));
+      rfb.addEventListener("connect", () => show("connected"));
       rfb.addEventListener("disconnect", (e) => {
-        // Sem popup: só avisa discretamente. Recarregue o iframe para reconectar.
-        show(e.detail.clean ? "desconectado" : "conexão caiu — use Reconectar");
+        // No popup: subtle notice only. Reload the iframe to reconnect.
+        show(e.detail.clean ? "disconnected" : "connection lost — use Reconnect");
       });
-      // Foco no canvas para o teclado ir direto ao desktop.
+      // Focus the canvas so keystrokes go straight to the desktop.
       rfb.addEventListener("connect", () => {
         const canvas = document.querySelector("#screen canvas");
         if (canvas) {
@@ -106,19 +106,18 @@
         const canvas = document.querySelector("#screen canvas");
         if (canvas) canvas.focus({ preventScroll: true });
       });
-      // Sem isso, o botão direito abre o menu do browser em vez de ir ao VNC
-      // (é o que abre o menu do Openbox no desktop vazio).
+      // Without this, right-click opens the browser menu instead of reaching VNC.
       document.getElementById("screen").addEventListener("contextmenu", (e) => {
         e.preventDefault();
       });
 
-      // ---- Clipboard bidirecional (texto), sem depender dos botões ----
-      // Ctrl+C DENTRO do Linux: o x11vnc empurra o texto no evento
-      // `clipboard` do RFB e escrevemos direto no clipboard do PC
-      // (escrita é permitida sem gesto em contexto seguro).
-      // Ctrl+V NO viewer: o keydown é ativação do usuário, então dá para
-      // ler o clipboard do PC e injetar no Linux (o browser pede
-      // permissão só na primeira vez).
+      // ---- Two-way clipboard (text), no buttons needed ----
+      // Ctrl+C INSIDE Linux: x11vnc pushes the text via the RFB
+      // `clipboard` event and we write it straight to the PC clipboard
+      // (writes are allowed without a gesture in a secure context).
+      // Ctrl+V IN the viewer: the keydown counts as user activation, so we
+      // can read the PC clipboard and inject it into Linux (the browser
+      // asks permission only the first time).
       const CTRL = 0xffe3;
       const KEY_V = 0x76;
       const clipView = document.getElementById("clipview");
@@ -137,8 +136,8 @@
       function pasteHostText(text) {
         if (!rfbReady() || !text) return Promise.resolve(false);
         rfb.clipboardPasteFrom(text);
-        // O x11vnc assume o clipboard remoto de forma assíncrona: sem essa
-        // pausa o Ctrl+V abaixo chega antes e cola o conteúdo antigo (ou nada).
+        // x11vnc picks up the remote clipboard asynchronously: without this
+        // pause the Ctrl+V below would land first and paste stale content (or nothing).
         return new Promise((resolve) => {
           setTimeout(() => {
             sendRemotePaste();
@@ -146,8 +145,8 @@
           }, 250);
         });
       }
-      // Ctrl+V com o viewer focado: lê o clipboard do PC e injeta no Linux.
-      // preventDefault aqui impede o `paste` logo abaixo de duplicar.
+      // Ctrl+V with the viewer focused: read the PC clipboard and inject into Linux.
+      // preventDefault here keeps the `paste` handler below from double-pasting.
       window.addEventListener(
         "keydown",
         async (event) => {
@@ -158,15 +157,15 @@
           event.stopPropagation();
           try {
             const text = await navigator.clipboard?.readText();
-            if (await pasteHostText(text)) show("colado no Linux");
-            else show("nada para colar");
+            if (await pasteHostText(text)) show("pasted into Linux");
+            else show("nothing to paste");
           } catch {
-            show("permita o acesso ao clipboard e tente de novo");
+            show("allow clipboard access and try again");
           }
         },
         true,
       );
-      // Reserva para colar via menu/gesto (quando o keydown não alcança).
+      // Fallback for menu/gesture paste (when the keydown misses).
       window.addEventListener(
         "paste",
         (event) => {
@@ -179,15 +178,15 @@
           event.preventDefault();
           event.stopPropagation();
           pasteHostText(text).then((ok) => {
-            if (ok) show("colado no Linux");
+            if (ok) show("pasted into Linux");
           });
         },
         true,
       );
-      // Texto copiado DENTRO do Linux: tenta ir direto ao clipboard do PC
-      // sem nenhum clique (execCommand não exige gesto; a API async é o
-      // plano B). Só mostra o painel se tudo falhar — e aí o texto já
-      // vem selecionado, então um Ctrl+C resolve.
+      // Text copied INSIDE Linux: try to reach the PC clipboard with no
+      // click (execCommand needs no gesture; the async API is plan B).
+      // Only show the panel if everything fails — and then the text comes
+      // pre-selected, so one Ctrl+C finishes the job.
       function legacyCopy(text) {
         try {
           const ta = document.createElement("textarea");
@@ -218,14 +217,14 @@
         clipView.textContent = lastRemote;
         const btn = document.createElement("button");
         btn.type = "button";
-        btn.textContent = "copiar";
+        btn.textContent = "copy";
         btn.addEventListener("click", async () => {
           try {
             await navigator.clipboard?.writeText(lastRemote);
-            show("copiado para o PC");
+            show("copied to this PC");
             clipView.classList.remove("show");
           } catch {
-            show("selecione o texto e use Ctrl+C");
+            show("select the text and press Ctrl+C");
             selectPanelText();
           }
         });
@@ -242,12 +241,12 @@
           return;
         }
         if (legacyCopy(lastRemote)) {
-          show("copiado para o PC");
+          show("copied to this PC");
           return;
         }
         try {
           await navigator.clipboard?.writeText(lastRemote);
-          show("copiado para o PC");
+          show("copied to this PC");
         } catch {
           showPanelFallback();
         }
@@ -257,6 +256,6 @@
   <body>
     <div id="screen"></div>
     <div id="status"></div>
-    <div id="clipview" title="Texto copiado dentro do Linux"></div>
+    <div id="clipview" title="Text copied inside Linux"></div>
   </body>
 </html>

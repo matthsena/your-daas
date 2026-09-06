@@ -3,16 +3,16 @@ import { DesktopViewer } from "./components/DesktopViewer";
 import { FileManager } from "./components/FileManager";
 
 export function App() {
-  const [tab, setTab] = useState<"desktop" | "arquivos">("desktop");
+  const [tab, setTab] = useState<"desktop" | "files">("desktop");
 
   return (
     <main className="shell">
       <header className="top">
         <div>
-          <h1>Premissa — OS no browser</h1>
-          <p>MVP: Debian bookworm-slim + Xvfb + XFCE + noVNC + gerenciador de arquivos.</p>
+          <h1>YourDaaS — your PC in the browser</h1>
+          <p>Debian + Xvfb + XFCE + Chrome via noVNC, plus a minimal file manager.</p>
         </div>
-        <nav className="tabs" aria-label="Navegação do MVP">
+        <nav className="tabs" aria-label="Client navigation">
           <button
             type="button"
             className={tab === "desktop" ? "active" : ""}
@@ -22,16 +22,16 @@ export function App() {
           </button>
           <button
             type="button"
-            className={tab === "arquivos" ? "active" : ""}
-            onClick={() => setTab("arquivos")}
+            className={tab === "files" ? "active" : ""}
+            onClick={() => setTab("files")}
           >
-            Arquivos
+            Files
           </button>
         </nav>
       </header>
       {tab === "desktop" ? <DesktopViewer /> : <FileManager />}
       <footer>
-        MVP local sem auth — só use em <code>127.0.0.1</code>. Não exponha na internet.
+        Local MVP without auth — only use on <code>127.0.0.1</code>. Do not expose to the internet.
       </footer>
     </main>
   );

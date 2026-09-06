@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Igual ao padrão do Debian, só troca o tema de ícones para Papirus-Dark.
+  Same as the Debian default, only switches the icon theme to Papirus-Dark.
 -->
 
 <channel name="xsettings" version="1.0">

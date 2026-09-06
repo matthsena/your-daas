@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { listFiles, makeDir, readFile, type FileEntry } from "../api";
 
-const HOME = "/home/rakazo";
+const HOME = "/home/user";
 
 function parent(path: string): string {
   if (path === "/" || path === HOME) return HOME;
@@ -26,7 +26,7 @@ export function FileManager() {
       setPath(out.path);
       setEntries(out.entries);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "falha ao listar");
+      setError(e instanceof Error ? e.message : "failed to list");
     } finally {
       setLoading(false);
     }
@@ -49,7 +49,7 @@ export function FileManager() {
       setPreviewPath(out.path);
       setPreview(out.content);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "falha ao ler");
+      setError(e instanceof Error ? e.message : "failed to read");
     }
   };
 
@@ -62,7 +62,7 @@ export function FileManager() {
       setNewFolder("");
       await load(path);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "falha ao criar pasta");
+      setError(e instanceof Error ? e.message : "failed to create folder");
     }
   };
 
@@ -70,31 +70,31 @@ export function FileManager() {
     <section className="panel">
       <header className="panel-head">
         <div>
-          <h2>Arquivos</h2>
-          <p>Gerenciador mínimo sobre a file-api do container. Preso ao home.</p>
+          <h2>Files</h2>
+          <p>Minimal manager over the container file API. Jailed to home.</p>
         </div>
         <div className="row">
           <button type="button" onClick={() => void load(parent(path))}>
-            ↑ Voltar
+            ↑ Up
           </button>
           <button type="button" onClick={() => void load(path)}>
-            Recarregar
+            Reload
           </button>
         </div>
       </header>
 
-      <code className="path">{loading ? "carregando…" : path}</code>
+      <code className="path">{loading ? "loading…" : path}</code>
       {error && <p className="error">{error}</p>}
 
       <div className="row">
         <input
           value={newFolder}
           onChange={(e) => setNewFolder(e.target.value)}
-          placeholder="nova-pasta"
-          aria-label="Nome da nova pasta"
+          placeholder="new-folder"
+          aria-label="New folder name"
         />
         <button type="button" onClick={() => void create()}>
-          Criar pasta
+          Create folder
         </button>
       </div>
 
@@ -111,7 +111,7 @@ export function FileManager() {
               </button>
             </li>
           ))}
-          {entries.length === 0 && !loading && <li className="empty">pasta vazia</li>}
+          {entries.length === 0 && !loading && <li className="empty">empty folder</li>}
         </ul>
         <div className="preview">
           {previewPath ? (
@@ -120,7 +120,7 @@ export function FileManager() {
               <pre>{preview}</pre>
             </>
           ) : (
-            <span className="empty">clique num arquivo de texto para pré-visualizar</span>
+            <span className="empty">click a text file to preview</span>
           )}
         </div>
       </div>

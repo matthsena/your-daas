@@ -6,8 +6,8 @@ export default defineConfig({
   server: {
     port: 5174,
     proxy: {
-      // No dev (docker sem o nginx), fala direto com os serviços locais.
-      // websockify serve o noVNC na raiz (:6080/), então tira o prefixo /novnc.
+      // In dev (docker without nginx), talk straight to the local services.
+      // websockify serves noVNC at the root (:6080/), so strip the /novnc prefix.
       "/novnc": {
         target: "http://127.0.0.1:6080",
         changeOrigin: true,

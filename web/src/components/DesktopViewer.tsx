@@ -20,8 +20,8 @@ export function DesktopViewer() {
     <section className="panel">
       <header className="panel-head">
         <div>
-          <h2>Desktop (Debian no browser)</h2>
-          <p>Xvfb + XFCE + Chrome via noVNC. Menu Applications no painel superior.</p>
+          <h2>Desktop (Debian in the browser)</h2>
+          <p>Xvfb + XFCE + Chrome via noVNC. Applications menu in the top panel.</p>
         </div>
         <div className="row">
           <label className="check">
@@ -30,16 +30,16 @@ export function DesktopViewer() {
               checked={viewOnly}
               onChange={(e) => setViewOnly(e.target.checked)}
             />
-            somente ver
+            view only
           </label>
           <button type="button" onClick={() => setNonce((n) => n + 1)}>
-            Reconectar
+            Reconnect
           </button>
           <button type="button" onClick={fullscreen}>
-            Tela cheia
+            Fullscreen
           </button>
           <a className="button" href={desktopUrl(viewOnly)} target="_blank" rel="noreferrer">
-            Abrir em aba
+            Open in tab
           </a>
         </div>
       </header>

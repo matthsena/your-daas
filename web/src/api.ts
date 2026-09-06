@@ -5,7 +5,7 @@ export interface FileEntry {
   size: number;
 }
 
-const base = ""; // mesmo origin: vite faz proxy, nginx faz proxy. Sem prefixo.
+const base = ""; // same origin: vite proxies in dev, nginx in prod. No prefix.
 
 async function json<T>(res: Response): Promise<T> {
   if (!res.ok) {
@@ -35,6 +35,6 @@ export async function makeDir(path: string): Promise<void> {
 }
 
 export function desktopUrl(viewOnly: boolean): string {
-  // Viewer próprio sem chrome do noVNC (sem popups/barra). Servido pelo container.
-  return `/novnc/premissa.html?view_only=${viewOnly ? "true" : "false"}`;
+  // Custom chromeless noVNC viewer (no popups/toolbar). Served by the container.
+  return `/novnc/yourdaas.html?view_only=${viewOnly ? "true" : "false"}`;
 }

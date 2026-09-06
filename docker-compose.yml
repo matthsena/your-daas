@@ -6,7 +6,7 @@ services:
       - "127.0.0.1:${NOVNC_PORT:-6080}:6080" # noVNC (desktop in the browser)
       - "127.0.0.1:${FILE_API_PORT:-7071}:7071" # file API (MVP)
     volumes:
-      - yourdaas-home:/home/rakazo
+      - yourdaas-home:/home/user
       # Guest clock follows the host (user's timezone).
       - /etc/localtime:/etc/localtime:ro
     environment:
