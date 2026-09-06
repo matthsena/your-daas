@@ -51,6 +51,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     /usr/share/applications/com.brave.Origin.desktop \
     /usr/share/applications/thunar.desktop \
     /usr/share/applications/xfce4-terminal.desktop \
+    /usr/share/applications/xfce4-mail-reader.desktop \
   && (update-desktop-database /usr/share/applications || rm -f /usr/share/applications/mimeinfo.cache)
 
 ENV DISPLAY=:1
@@ -68,6 +69,7 @@ COPY --chmod=644 viewer.html /usr/share/novnc/yourdaas.html
 COPY --chmod=644 xfce/panel-default.xml /etc/xdg/xfce4/panel/default.xml
 COPY --chmod=644 xfce/xfwm4.xml /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml
 COPY --chmod=644 xfce/xsettings.xml /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml
+COPY --chmod=644 xfce/brave-origin-helper.desktop /usr/share/xfce4/helpers/brave-origin.desktop
 COPY --chmod=644 desktop-files/brave-origin.desktop /usr/share/applications/brave-origin.desktop
 COPY --chmod=644 desktop-files/thunar.desktop /usr/share/applications/thunar.desktop
 COPY --chmod=644 desktop-files/xfce4-terminal.desktop /usr/share/applications/xfce4-terminal.desktop

@@ -36,6 +36,13 @@ the browser open) blocks new windows: a process runs, no window appears.
 the profile itself may be corrupt — rename `~/.config/BraveSoftware` and
 retry.
 
+A different "nothing opens": the Applications-menu **Web Browser** entry
+goes through exo (`exo-open --launch WebBrowser`), which runs the helper
+*without* our container flags — Brave then dies in `chrome-sandbox`
+(`Failed to move to new namespace`, no userns here). The shipped helper at
+`computer/xfce/brave-origin-helper.desktop` carries the same
+`--no-sandbox` flags as the dock launcher for exactly this reason.
+
 ## Changed desktop defaults don't apply
 
 XFCE/plank read `~/.config` from the home volume first; image defaults only

@@ -83,6 +83,23 @@ if command -v dconf >/dev/null 2>&1; then
 fi
 plank >/tmp/yourdaas/plank.log 2>&1 &
 
+# Boot-time OS tuning (idempotent; applies to pre-existing home volumes too).
+if command -v xfconf-query >/dev/null 2>&1; then
+  # Compositor off: no transparency/shadows/animations taxing the VNC encode.
+  for _ in $(seq 1 50); do
+    xfconf-query -c xfwm4 -p /general/use_compositing >/dev/null 2>&1 && break
+    sleep 0.2
+  done
+  xfconf-query -c xfwm4 -p /general/use_compositing -s false >/dev/null 2>&1 || true
+fi
+# Brave Origin as the web browser: exo preferred-apps entry plus
+# x-scheme-handler/text-html defaults (merged, never clobbers the file).
+mkdir -p "$USER_HOME/.config/xfce4"
+printf 'WebBrowser=brave-origin\n' > "$USER_HOME/.config/xfce4/helpers.rc"
+if command -v xdg-mime >/dev/null 2>&1; then
+  xdg-mime default brave-origin.desktop x-scheme-handler/http x-scheme-handler/https text/html >/dev/null 2>&1 || true
+fi
+
 # Throughput-tuned for motion: tight poll + minimal defer (see docs/VIDEO.md).
 x11vnc -display :1 -forever -shared -nopw -listen 127.0.0.1 -rfbport 5900 -xkb -ncache 0 \
   -deferupdate 5 -wait 5 -threads \
