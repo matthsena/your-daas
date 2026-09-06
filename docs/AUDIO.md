@@ -1,0 +1,49 @@
+# Audio design (duplex, voice-grade)
+
+VNC carries no audio, so sound travels on a parallel channel that mirrors
+the noVNC pattern: browser ↔ nginx (`/audio/`) ↔ `audio-ws` (`:7072`) ↔
+headless PulseAudio.
+
+## Signal path
+
+**Out (Linux → headphones):** apps play to the default sink `yd_out`
+(a null sink) → `ffmpeg` captures `yd_out.monitor`, encodes Opus 24kHz mono
+(~40kbps) as low-latency WebM clusters → WebSocket `/out` → browser
+`MediaSource` (`audio/webm;codecs=opus`) → `<audio>` element.
+Expected latency 0.5–1s: fine for video and calls, not for games.
+
+**In (mic → Linux):** browser `getUserMedia` (16kHz mono, echo cancellation)
+→ `AudioWorklet` converts float32 → PCM16 → WebSocket `/mic` → server pipes
+frames into `pacat --playback` on sink `yd_mic`, exposed to apps as the
+default source `yd_mic_in` (`module-remap-source`). Expected latency 200–400ms.
+
+## Container notes
+
+- PulseAudio runs unprivileged with its runtime under `/tmp/yourdaas/run`
+  (`XDG_RUNTIME_DIR`) — there is no `/run/user/<uid>` and no system bus.
+  Anything via `docker exec` must export the same `XDG_RUNTIME_DIR` or
+  `pactl`/`parec` will report "connection refused" while the daemon is fine.
+- `audio-ws` binds `0.0.0.0` inside the container netns because Docker
+  forwards from the host loopback via eth0; external reachability is still
+  decided by `ports:` (`127.0.0.1` only), same posture as the file API.
+- One ffmpeg per `/out` connection; it is killed on disconnect.
+- Codecs: libopus accepts 8/12/16/24/48kHz only (32kHz fails to init).
+
+## Browser notes (Chrome-first)
+
+- The `<audio>` element needs a user gesture: sound starts on the
+  **Sound** toggle click. No gesture, no audio — browser policy, no workaround.
+- Mic permission is per origin and asked once; speaker and mic are
+  independent (one may work without the other — the toggle says which).
+- Firefox/Safari: MediaSource Opus and AudioWorklet coverage varies;
+  Chrome is the verified path. WebRTC (with TURN) is the planned upgrade
+  for lower latency and wider deployability — see `docs/ROADMAP.md`.
+
+## Verify without ears
+
+```bash
+# sinks/sources up?
+docker exec <computer> sh -c 'export XDG_RUNTIME_DIR=/tmp/yourdaas/run; pactl info | grep -E "Default (Sink|Source)"'
+# out: valid Opus/WebM bytes on the socket (see /tmp/ws-audio-test.py pattern)
+# mic: inject a 440Hz sine on /mic, record yd_mic.monitor with parec, check RMS
+```

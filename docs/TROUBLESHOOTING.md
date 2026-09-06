@@ -48,6 +48,22 @@ See `docs/CLIPBOARD.md`. The two classics: cached `yourdaas.html`
 (`127.0.0.1:5174` vs `127.0.0.1:6080` are different origins) but expected
 on the other.
 
+## Audio quirks
+
+- **No sound after toggling:** the `<audio>` element requires the toggle
+  click itself (user gesture). Toggling programmatically never produces audio.
+- **"Sound unavailable":** the `/audio/` proxy reaches `computer:7072`
+  (fixed inside the container; only the host side is configurable via
+  `AUDIO_PORT`). Check `audio-ws` is listening (`/tmp/yourdaas/audio-ws.log`)
+  and the container was recreated after compose changes.
+- **`pactl` says "connection refused" but audio works:** export
+  `XDG_RUNTIME_DIR=/tmp/yourdaas/run` in your `docker exec` shell first.
+- **Mic missing but speaker fine (or vice versa):** by design — the toggle
+  reports which direction failed. Mic needs per-origin permission; check the
+  browser site settings.
+- **Choppy out:** one ffmpeg per connection is normal; two ffmpeg processes
+  means a leaked connection (toggling Sound off kills it).
+
 ## Logs
 
 Inside the container, `/tmp/yourdaas/` holds `xvfb.log`, `xfce.log`,

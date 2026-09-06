@@ -7,7 +7,8 @@ browser ──HTTPS──► web (nginx)
    │                 ├─ /            → static React app
    │                 ├─ /novnc/*     → proxy → computer:6080 (noVNC page + assets)
    │                 ├─ /websockify  → proxy (WS) → computer:6080/websockify
-   │                 └─ /api/*       → proxy → computer:7071 (file API)
+   │                 ├─ /api/*       → proxy → computer:7071 (file API)
+   │                 └─ /audio/*     → proxy (WS) → computer:7072 (duplex audio)
    │
    └─ iframe allow="clipboard-read; clipboard-write" (clipboard needs it)
 ```
@@ -31,6 +32,7 @@ autocutsel ×2 bridges X CLIPBOARD ↔ CUTBUFFER ↔ PRIMARY
 | `computer/start.sh` | boot order, plank pins via dconf, Chrome Singleton lock cleanup |
 | `computer/viewer.html` | chromeless noVNC page (`yourdaas.html` in the image): keyboard focus, right-click passthrough, clipboard bridge |
 | `computer/file-api.py` | `GET /api/health, /api/files, /api/file`, `POST /api/mkdir`; path-jailed, no auth (loopback only) |
+| `computer/audio-ws.py` | duplex audio: `/out` Opus/WebM speaker stream, `/mic` PCM16 mic injection; no auth (loopback only) |
 | `computer/desktop-files/` | canonical launchers with `StartupWMClass` (grouping depends on these) |
 | `computer/xfce/` | panel / wm / icon-theme defaults (first boot seeds; later the home volume wins) |
 | `web/src` | `DesktopViewer` (iframe), `FileManager` (file API), `api.ts` (routes) |
