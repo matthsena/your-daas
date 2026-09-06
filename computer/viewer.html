@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <title>Premissa computer</title>
+    <style>
+      html,
+      body,
+      #screen {
+        margin: 0;
+        height: 100%;
+        width: 100%;
+        background: #0e0e10;
+        overflow: hidden;
+      }
+      #status {
+        position: fixed;
+        left: 8px;
+        bottom: 8px;
+        font: 12px system-ui, sans-serif;
+        color: #a1a1aa;
+        background: rgba(0, 0, 0, 0.55);
+        padding: 4px 8px;
+        border-radius: 6px;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.3s;
+      }
+      #status.show { opacity: 1; }
+      #clipview {
+        position: fixed;
+        right: 8px;
+        bottom: 8px;
+        max-width: 320px;
+        max-height: 160px;
+        overflow: auto;
+        display: none;
+        background: rgba(10, 10, 12, 0.92);
+        color: #e8e8ea;
+        border: 1px solid #333338;
+        border-radius: 8px;
+        padding: 8px 10px;
+        font: 12px system-ui, sans-serif;
+        white-space: pre-wrap;
+        word-break: break-word;
+        user-select: text;
+      }
+      #clipview.show { display: block; }
+      #clipview button {
+        display: block;
+        margin-top: 8px;
+        background: rgba(0, 0, 0, 0.6);
+        color: #e8e8ea;
+        border: 1px solid #333338;
+        border-radius: 6px;
+        padding: 5px 9px;
+        cursor: pointer;
+        font: 12px system-ui, sans-serif;
+      }
+    </style>
+    <script type="module">
+      import RFB from "./core/rfb.js";
+
+      function query(name, fallback) {
+        const m = `${document.location.href}${window.location.hash}`.match(
+          new RegExp(`.*[?&]${name}=([^&#]*)`),
+        );
+        return m ? decodeURIComponent(m[1]) : fallback;
+      }
+      function flag(name) {
+        const v = String(query(name, "false")).toLowerCase();
+        return v === "1" || v === "true" || v === "yes";
+      }
+
+      const status = document.getElementById("status");
+      const show = (msg) => {
+        if (!status) return;
+        status.textContent = msg;
+        status.classList.add("show");
+        clearTimeout(show.t);
+        show.t = setTimeout(() => status.classList.remove("show"), 4000);
+      };
+
+      // Websocket no mesmo origin (nginx/vite fazem proxy de /websockify).
+      const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+      const url = `${protocol}://${window.location.host}/websockify`;
+
+      const rfb = new RFB(document.getElementById("screen"), url);
+      rfb.viewOnly = flag("view_only");
+      rfb.scaleViewport = true;
+      rfb.clipViewport = false;
+      rfb.addEventListener("connect", () => show("conectado"));
+      rfb.addEventListener("disconnect", (e) => {
+        // Sem popup: só avisa discretamente. Recarregue o iframe para reconectar.
+        show(e.detail.clean ? "desconectado" : "conexão caiu — use Reconectar");
+      });
+      // Foco no canvas para o teclado ir direto ao desktop.
+      rfb.addEventListener("connect", () => {
+        const canvas = document.querySelector("#screen canvas");
+        if (canvas) {
+          canvas.tabIndex = 0;
+          canvas.focus({ preventScroll: true });
+        }
+      });
+      document.getElementById("screen").addEventListener("click", () => {
+        const canvas = document.querySelector("#screen canvas");
+        if (canvas) canvas.focus({ preventScroll: true });
+      });
+      // Sem isso, o botão direito abre o menu do browser em vez de ir ao VNC
+      // (é o que abre o menu do Openbox no desktop vazio).
+      document.getElementById("screen").addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+      });
+
+      // ---- Clipboard bidirecional (texto), sem depender dos botões ----
+      // Ctrl+C DENTRO do Linux: o x11vnc empurra o texto no evento
+      // `clipboard` do RFB e escrevemos direto no clipboard do PC
+      // (escrita é permitida sem gesto em contexto seguro).
+      // Ctrl+V NO viewer: o keydown é ativação do usuário, então dá para
+      // ler o clipboard do PC e injetar no Linux (o browser pede
+      // permissão só na primeira vez).
+      const CTRL = 0xffe3;
+      const KEY_V = 0x76;
+      const clipView = document.getElementById("clipview");
+      let lastRemote = "";
+
+      function rfbReady() {
+        return rfb && !rfb.viewOnly && typeof rfb.clipboardPasteFrom === "function";
+      }
+      function sendRemotePaste() {
+        if (typeof rfb.sendKey !== "function") return;
+        rfb.sendKey(CTRL, "ControlLeft", true);
+        rfb.sendKey(KEY_V, "KeyV", true);
+        rfb.sendKey(KEY_V, "KeyV", false);
+        rfb.sendKey(CTRL, "ControlLeft", false);
+      }
+      function pasteHostText(text) {
+        if (!rfbReady() || !text) return Promise.resolve(false);
+        rfb.clipboardPasteFrom(text);
+        // O x11vnc assume o clipboard remoto de forma assíncrona: sem essa
+        // pausa o Ctrl+V abaixo chega antes e cola o conteúdo antigo (ou nada).
+        return new Promise((resolve) => {
+          setTimeout(() => {
+            sendRemotePaste();
+            resolve(true);
+          }, 250);
+        });
+      }
+      // Ctrl+V com o viewer focado: lê o clipboard do PC e injeta no Linux.
+      // preventDefault aqui impede o `paste` logo abaixo de duplicar.
+      window.addEventListener(
+        "keydown",
+        async (event) => {
+          if (rfb.viewOnly) return;
+          if (!(event.ctrlKey || event.metaKey)) return;
+          if (event.code !== "KeyV" || event.repeat) return;
+          event.preventDefault();
+          event.stopPropagation();
+          try {
+            const text = await navigator.clipboard?.readText();
+            if (await pasteHostText(text)) show("colado no Linux");
+            else show("nada para colar");
+          } catch {
+            show("permita o acesso ao clipboard e tente de novo");
+          }
+        },
+        true,
+      );
+      // Reserva para colar via menu/gesto (quando o keydown não alcança).
+      window.addEventListener(
+        "paste",
+        (event) => {
+          if (rfb.viewOnly) return;
+          const text =
+            event.clipboardData?.getData("text/plain") ||
+            event.clipboardData?.getData("text") ||
+            "";
+          if (!text) return;
+          event.preventDefault();
+          event.stopPropagation();
+          pasteHostText(text).then((ok) => {
+            if (ok) show("colado no Linux");
+          });
+        },
+        true,
+      );
+      // Texto copiado DENTRO do Linux: tenta ir direto ao clipboard do PC
+      // sem nenhum clique (execCommand não exige gesto; a API async é o
+      // plano B). Só mostra o painel se tudo falhar — e aí o texto já
+      // vem selecionado, então um Ctrl+C resolve.
+      function legacyCopy(text) {
+        try {
+          const ta = document.createElement("textarea");
+          ta.value = text;
+          ta.setAttribute("readonly", "");
+          ta.style.cssText = "position:fixed;opacity:0;pointer-events:none;";
+          document.body.appendChild(ta);
+          ta.select();
+          const ok = document.execCommand("copy");
+          ta.remove();
+          return ok;
+        } catch {
+          return false;
+        }
+      }
+      function selectPanelText() {
+        try {
+          const range = document.createRange();
+          range.selectNodeContents(clipView);
+          const sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(range);
+        } catch {
+          /* ignore */
+        }
+      }
+      function showPanelFallback() {
+        clipView.textContent = lastRemote;
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = "copiar";
+        btn.addEventListener("click", async () => {
+          try {
+            await navigator.clipboard?.writeText(lastRemote);
+            show("copiado para o PC");
+            clipView.classList.remove("show");
+          } catch {
+            show("selecione o texto e use Ctrl+C");
+            selectPanelText();
+          }
+        });
+        clipView.appendChild(btn);
+        clipView.classList.add("show");
+        selectPanelText();
+        clearTimeout(clipView.t);
+        clipView.t = setTimeout(() => clipView.classList.remove("show"), 15000);
+      }
+      rfb.addEventListener("clipboard", async (event) => {
+        lastRemote = event.detail?.text ?? "";
+        if (!lastRemote) {
+          clipView.classList.remove("show");
+          return;
+        }
+        if (legacyCopy(lastRemote)) {
+          show("copiado para o PC");
+          return;
+        }
+        try {
+          await navigator.clipboard?.writeText(lastRemote);
+          show("copiado para o PC");
+        } catch {
+          showPanelFallback();
+        }
+      });
+    </script>
+  </head>
+  <body>
+    <div id="screen"></div>
+    <div id="status"></div>
+    <div id="clipview" title="Texto copiado dentro do Linux"></div>
+  </body>
+</html>

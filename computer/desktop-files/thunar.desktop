@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Arquivos
+Comment=Gerenciador de arquivos
+Exec=thunar %U
+Icon=system-file-manager
+StartupWMClass=thunar
+MimeType=inode/directory;
+Terminal=false
+Type=Application
+Categories=System;FileManager;

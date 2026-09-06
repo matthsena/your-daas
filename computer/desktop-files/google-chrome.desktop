@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Chrome
+Comment=Navegador do computer
+Exec=google-chrome --test-type --no-sandbox --disable-dev-shm-usage --disable-gpu --no-first-run --password-store=basic %U
+Icon=google-chrome
+StartupWMClass=google-chrome
+Terminal=false
+Type=Application
+Categories=Network;WebBrowser;
+MimeType=x-scheme-handler/http;x-scheme-handler/https;text/html;
