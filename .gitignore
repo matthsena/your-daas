@@ -216,3 +216,16 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Node
+node_modules/
+web/dist/
+npm-debug.log*
+
+# Cloudflare Tunnel credentials (managed on the host, never committed)
+.cloudflared/
+cert.pem
+tunnel-credentials.json
+
+# Local compose overrides with secrets
+docker-compose.override.yml

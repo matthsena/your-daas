@@ -1,0 +1,15 @@
+# Production overlay: no public ports; traffic arrives via the Cloudflare Tunnel.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+services:
+  computer:
+    ports: []
+  web:
+    ports: []
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run
+    env_file:
+      - .env # provides TUNNEL_TOKEN (never commit it)
+    depends_on:
+      - web
+    restart: unless-stopped
