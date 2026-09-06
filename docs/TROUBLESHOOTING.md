@@ -63,14 +63,17 @@ on the other.
   browser site settings.
 - **Choppy out:** one ffmpeg per connection is normal; two ffmpeg processes
   means a leaked connection (toggling Sound off kills it).
-- **Works in incognito/private, fails in the normal profile:** suspect a
-  browser extension. Privacy, anti-fingerprinting, anti-miner, and autoplay
-  blockers can mangle the WebSocket handshake before it leaves the browser —
-  page code cannot cause (or fix) that. Decisive test: Firefox Troubleshoot
-  Mode (or Chrome with extensions disabled); if sound works there, re-enable
-  extensions one by one. Server-side fingerprint: nginx logs `GET /audio/out
-  → 400` with a 77-byte body, which is exactly `missing
-  Sec-WebSocket-Version header` — a header no page can remove.
+- **Works in incognito/private, fails in the normal profile:** first suspect
+  `localhost` vs `127.0.0.1`. If `localhost` resolves to `::1` (IPv6) while
+  the stack publishes IPv4 loopback only, the browser's WebSocket may fail
+  without falling back — the app now retries the twin host automatically
+  (`localhost` <-> `127.0.0.1`), so this heals itself; explicit `127.0.0.1`
+  in the address bar is the manual workaround. If it still fails on both,
+  suspect a header-mangling extension or local MITM (privacy, anti-miner,
+  AV web shields): decisive test is Firefox Troubleshoot Mode (or Chrome
+  with extensions disabled). Server-side fingerprint of a mangled handshake:
+  nginx logs `GET /audio/out → 400` with a 77-byte body, which is exactly
+  `missing Sec-WebSocket-Version header` — a header no page can remove.
 - **Firefox `Feature Policy: Skipping clipboard-read/write`:** Firefox doesn't
   recognize those iframe allow-tokens; clipboard inside the viewer is
   degraded there. Chrome is the verified path (see `docs/CLIPBOARD.md`).
