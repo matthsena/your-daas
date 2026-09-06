@@ -16,6 +16,12 @@ export default defineConfig({
       },
       "/websockify": { target: "ws://127.0.0.1:6080", changeOrigin: true, ws: true },
       "/api": { target: "http://127.0.0.1:7071", changeOrigin: true },
+      "/audio": {
+        target: "ws://127.0.0.1:7072",
+        changeOrigin: true,
+        ws: true,
+        rewrite: (path) => path.replace(/^\/audio/, "") || "/",
+      },
     },
   },
   preview: { port: 5174 },

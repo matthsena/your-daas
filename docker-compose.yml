@@ -5,6 +5,7 @@ services:
     ports:
       - "127.0.0.1:${NOVNC_PORT:-6080}:6080" # noVNC (desktop in the browser)
       - "127.0.0.1:${FILE_API_PORT:-7071}:7071" # file API (MVP)
+      - "127.0.0.1:${AUDIO_PORT:-7072}:${AUDIO_PORT:-7072}" # audio bridge (duplex, loopback only)
     volumes:
       - yourdaas-home:/home/user
       # Guest clock follows the host (user's timezone).
@@ -12,6 +13,7 @@ services:
     environment:
       # Force another timezone without touching the host, e.g. TZ=America/Sao_Paulo
       - TZ=${TZ:-}
+      - AUDIO_PORT=${AUDIO_PORT:-7072}
     restart: unless-stopped
 
   web:

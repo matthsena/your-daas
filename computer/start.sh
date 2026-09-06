@@ -92,6 +92,9 @@ websockify --heartbeat=30 --web="$NOVNC_ROOT" 0.0.0.0:6080 127.0.0.1:5900 \
 
 python3 /usr/local/bin/yourdaas-file-api >/tmp/yourdaas/file-api.log 2>&1 &
 
+AUDIO_PORT="${AUDIO_PORT:-7072}"
+python3 /usr/local/bin/yourdaas-audio-ws >/tmp/yourdaas/audio-ws.log 2>&1 &
+
 while kill -0 "$XVFB_PID" 2>/dev/null; do
   sleep 2
 done
