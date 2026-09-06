@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Brave
+Comment=Computer browser
+Exec=brave-origin-stable --test-type --no-sandbox --disable-dev-shm-usage --disable-gpu --no-first-run --password-store=basic %U
+Icon=brave-origin
+StartupWMClass=brave-origin
+Terminal=false
+Type=Application
+Categories=Network;WebBrowser;
+MimeType=x-scheme-handler/http;x-scheme-handler/https;text/html;

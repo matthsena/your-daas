@@ -39,18 +39,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     python3-websockets \
   && rm -rf /var/lib/apt/lists/* \
+  && wget -q -O /usr/share/keyrings/brave-browser-archive-keyring.gpg \
+    https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg \
+  && wget -q -O /etc/apt/sources.list.d/brave-browser-release.sources \
+    https://brave-browser-apt-release.s3.brave.com/brave-browser.sources \
   && apt-get update \
-  && wget -q -O /tmp/google-chrome.deb \
-    https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
-  && apt-get install -y --no-install-recommends /tmp/google-chrome.deb \
-  && rm -f /tmp/google-chrome.deb \
+  && apt-get install -y --no-install-recommends brave-origin \
   && rm -rf /var/lib/apt/lists/* \
   && groupadd --gid 1000 user \
   && useradd --uid 1000 --gid user --create-home --shell /bin/bash user \
   && echo "user ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/user \
   && chmod 440 /etc/sudoers.d/user \
-  && rm -f /usr/share/applications/google-chrome.desktop \
-    /usr/share/applications/com.google.Chrome.desktop \
+  && rm -f /usr/share/applications/brave-origin.desktop \
+    /usr/share/applications/com.brave.Origin.desktop \
     /usr/share/applications/thunar.desktop \
     /usr/share/applications/xfce4-terminal.desktop \
   && (update-desktop-database /usr/share/applications || rm -f /usr/share/applications/mimeinfo.cache)
@@ -70,7 +71,7 @@ COPY --chmod=644 viewer.html /usr/share/novnc/yourdaas.html
 COPY --chmod=644 xfce/panel-default.xml /etc/xdg/xfce4/panel/default.xml
 COPY --chmod=644 xfce/xfwm4.xml /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml
 COPY --chmod=644 xfce/xsettings.xml /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml
-COPY --chmod=644 desktop-files/google-chrome.desktop /usr/share/applications/google-chrome.desktop
+COPY --chmod=644 desktop-files/brave-origin.desktop /usr/share/applications/brave-origin.desktop
 COPY --chmod=644 desktop-files/thunar.desktop /usr/share/applications/thunar.desktop
 COPY --chmod=644 desktop-files/xfce4-terminal.desktop /usr/share/applications/xfce4-terminal.desktop
 RUN sed -i 's/\r$//' /usr/local/bin/yourdaas-computer /usr/local/bin/yourdaas-file-api /usr/local/bin/yourdaas-audio-ws \

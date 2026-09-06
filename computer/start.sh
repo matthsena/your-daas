@@ -9,11 +9,11 @@ cd "$USER_HOME"
 
 rm -f /tmp/.X1-lock /tmp/.X11-unix/X1
 
-# Chrome locks the profile (Singleton*) if the container died with it open; the
+# Brave locks the profile (Singleton*) if the container died with it open; the
 # stale lock in the persistent home blocks any new window (windowless process).
-rm -f "$USER_HOME/.config/google-chrome/SingletonSocket" \
-  "$USER_HOME/.config/google-chrome/SingletonCookie" \
-  "$USER_HOME/.config/google-chrome/SingletonLock"
+rm -f "$USER_HOME"/.config/BraveSoftware/*/SingletonSocket \
+  "$USER_HOME"/.config/BraveSoftware/*/SingletonCookie \
+  "$USER_HOME"/.config/BraveSoftware/*/SingletonLock
 
 Xvfb :1 -screen 0 1280x800x24 -ac +extension RANDR +render -noreset >/tmp/yourdaas/xvfb.log 2>&1 &
 XVFB_PID=$!
@@ -67,7 +67,7 @@ setsid autocutsel -selection PRIMARY >/dev/null 2>&1 < /dev/null &
 # Plank dock with 3 pinned apps (browser, files, terminal).
 # Seed launchers in the persistent home; never overwrite the user's pins.
 mkdir -p "$USER_HOME/.config/plank/dock1/launchers"
-for app in google-chrome thunar xfce4-terminal; do
+for app in brave-origin thunar xfce4-terminal; do
   item="$USER_HOME/.config/plank/dock1/launchers/$app.dockitem"
   if [[ ! -e "$item" ]]; then
     printf '[PlankDockItemPreferences]\nLauncher=file:///usr/share/applications/%s.desktop\n' "$app" > "$item"
