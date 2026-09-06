@@ -22,18 +22,24 @@ registerProcessor("yd-mic", class extends AudioWorkletProcessor {
 });
 `;
 
-interface Live {
-  outWs: WebSocket | null;
-  micWs: WebSocket | null;
+interface OutLive {
+  ws: WebSocket;
   audio: HTMLAudioElement;
   urls: string[];
-  stream: MediaStream | null;
-  ctx: AudioContext | null;
+}
+
+interface MicLive {
+  ws: WebSocket;
+  stream: MediaStream;
+  ctx: AudioContext;
+  urls: string[];
 }
 
 export function SoundToggle() {
-  const [on, setOn] = useState(false);
-  const [note, setNote] = useState("Turn the remote sound on/off");
+  // Speaker and mic are fully independent channels.
+  const [outState, setOutState] = useState<"off" | "starting" | "on">("off");
+  const [micOn, setMicOn] = useState(false);
+  const [micNote, setMicNote] = useState("Turn the microphone on/off");
   // Remote plumbing (Linux side): only the volume target matters here.
   const [outName, setOutName] = useState("");
   const [volume, setVolume] = useState(100);
@@ -42,11 +48,15 @@ export function SoundToggle() {
   const [hostOuts, setHostOuts] = useState<MediaDeviceInfo[]>([]);
   const [hostInId, setHostInId] = useState("");
   const [hostOutId, setHostOutId] = useState("");
-  const live = useRef<Live | null>(null);
+  const outRef = useRef<OutLive | null>(null);
+  const micRef = useRef<MicLive | null>(null);
   const gen = useRef(0);
+  const micGen = useRef(0);
+  const hostInIdRef = useRef("");
+  const hostOutIdRef = useRef("");
 
   // A dismissed mic-permission prompt never settles in Chrome, so every
-  // await here needs a timeout — otherwise the toggle hangs with no feedback.
+  // await here needs a timeout — otherwise buttons hang with no feedback.
   const withTimeout = <T,>(p: Promise<T>, ms: number, label: string): Promise<T> =>
     Promise.race([
       p,
@@ -62,7 +72,7 @@ export function SoundToggle() {
         setVolume(out.volume);
       }
     } catch {
-      /* audio service unreachable; toggle will report it */
+      /* audio service unreachable; buttons will report it */
     }
   };
 
@@ -76,44 +86,25 @@ export function SoundToggle() {
     }
   };
 
-  useEffect(() => {
-    void loadDevices();
-    void refreshHostDevices();
-  }, []);
-
-  useEffect(() => {
-    if (!on) return;
-    const refresh = () => void refreshHostDevices();
-    navigator.mediaDevices.addEventListener("devicechange", refresh);
-    return () => navigator.mediaDevices.removeEventListener("devicechange", refresh);
-  }, [on ]);
-
-  const stopMicChain = () => {
-    const cur = live.current;
-    try { cur?.micWs?.close(); } catch { /* ignore */ }
-    cur?.stream?.getTracks().forEach((t) => t.stop());
-    void cur?.ctx?.close().catch(() => undefined);
-    if (cur) {
-      cur.micWs = null;
-      cur.stream = null;
-      cur.ctx = null;
-    }
+  const cleanupOut = (parts: OutLive) => {
+    try { parts.ws.close(); } catch { /* ignore */ }
+    parts.audio.pause();
+    parts.urls.forEach((u) => URL.revokeObjectURL(u));
   };
 
-  const stop = () => {
-    stopMicChain();
-    const cur = live.current;
-    live.current = null;
-    if (!cur) return;
-    try { cur.outWs?.close(); } catch { /* ignore */ }
-    cur.audio.pause();
-    cur.urls.forEach((u) => URL.revokeObjectURL(u));
+  const cleanupMic = (parts: MicLive) => {
+    try { parts.ws.close(); } catch { /* ignore */ }
+    parts.stream.getTracks().forEach((t) => t.stop());
+    void parts.ctx.close().catch(() => undefined);
   };
 
-  const startOut = async (): Promise<{ ws: WebSocket; audio: HTMLAudioElement; urls: string[] }> => {
+  const startOut = async (tracker?: { ws: WebSocket | null }): Promise<OutLive> => {
     const urls: string[] = [];
     const audio = new Audio();
+    // Muted autoplay is always allowed: start silent, unmute on gesture.
+    audio.muted = true;
     const ws = new WebSocket(audioUrl("out"));
+    if (tracker) tracker.ws = ws;
     ws.binaryType = "arraybuffer";
     const ready = new Promise<void>((resolve, reject) => {
       const ms = new MediaSource();
@@ -144,11 +135,68 @@ export function SoundToggle() {
       ws.onerror = () => reject(new Error("audio channel failed"));
     });
     await ready;
-    await audio.play();
+    try {
+      await audio.play();
+    } catch (e) {
+      // Autoplay blocked (no gesture yet): don't leak the socket/ffmpeg.
+      try { ws.close(); } catch { /* ignore */ }
+      urls.forEach((u) => URL.revokeObjectURL(u));
+      throw e;
+    }
     return { ws, audio, urls };
   };
 
-  const startMic = async (deviceId?: string): Promise<{ ws: WebSocket; stream: MediaStream; ctx: AudioContext; urls: string[] }> => {
+  const tryUnmute = () => {
+    const a = outRef.current?.audio;
+    if (!a || !a.muted) return;
+    a.muted = false;
+    if (a.paused) void a.play().catch(() => undefined);
+  };
+
+  const enableOut = async (myGen: number) => {
+    if (outRef.current) return;
+    setOutState("starting");
+    // The socket exists before playback starts: sweep it on every exit
+    // path (timeout, stale generation) or its ffmpeg leaks server-side.
+    const attempt: { ws: WebSocket | null } = { ws: null };
+    const sweep = () => {
+      if (attempt.ws) {
+        try { attempt.ws.close(); } catch { /* ignore */ }
+        attempt.ws = null;
+      }
+    };
+    let parts: OutLive | null = null;
+    try {
+      parts = await withTimeout(startOut(attempt), 10000, "speaker timeout");
+    } catch {
+      parts = null;
+    }
+    if (!parts || gen.current !== myGen || outRef.current) {
+      sweep();
+      if (parts) cleanupOut(parts);
+      if (gen.current === myGen && !outRef.current) setOutState("off");
+      return;
+    }
+    if (hostOutIdRef.current && typeof parts.audio.setSinkId === "function") {
+      try {
+        await parts.audio.setSinkId(hostOutIdRef.current);
+      } catch {
+        /* keep default output */
+      }
+    }
+    outRef.current = parts;
+    setOutState("on");
+  };
+
+  const disableOut = () => {
+    gen.current += 1;
+    const cur = outRef.current;
+    outRef.current = null;
+    if (cur) cleanupOut(cur);
+    setOutState("off");
+  };
+
+  const startMic = async (deviceId?: string): Promise<MicLive> => {
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: {
         sampleRate: 16000,
@@ -180,100 +228,92 @@ export function SoundToggle() {
     return { ws, stream, ctx, urls };
   };
 
-  const toggle = async () => {
-    if (live.current) {
-      gen.current += 1;
-      stop();
-      setOn(false);
-      setNote("Turn the remote sound on/off");
-      return;
-    }
-    const g = ++gen.current;
-    const alive = () => gen.current === g && !live.current;
-    // Speaker first: commit ON as soon as it works, attach the mic after.
-    let out: { ws: WebSocket; audio: HTMLAudioElement; urls: string[] } | null = null;
+  const attachMic = async (id: string, myGen: number): Promise<boolean> => {
     try {
-      out = await withTimeout(startOut(), 10000, "speaker timeout");
-    } catch {
-      out = null;
-    }
-    if (!alive()) {
-      if (out) {
-        out.ws.close();
-        out.urls.forEach((u) => URL.revokeObjectURL(u));
+      const parts = await withTimeout(startMic(id || undefined), 20000, "mic timeout");
+      if (micGen.current !== myGen) {
+        cleanupMic(parts);
+        return false;
       }
-      return;
-    }
-    live.current = {
-      outWs: out ? out.ws : null,
-      micWs: null,
-      audio: out ? out.audio : new Audio(),
-      urls: out ? [...out.urls] : [],
-      stream: null,
-      ctx: null,
-    };
-    setOn(true);
-    setNote(out ? "Remote sound is on (mic…)" : "Speaker unavailable (mic…)");
-    // Mic permission (if granted) unlocks real device labels.
-    void refreshHostDevices();
-    // Mic attaches in the background: a dismissed permission prompt must
-    // never block the speaker, which is already playing.
-    try {
-      const mic = await withTimeout(startMic(hostInId || undefined), 20000, "mic timeout");
-      if (gen.current !== g || !live.current) {
-        mic.ws.close();
-        mic.stream.getTracks().forEach((t) => t.stop());
-        void mic.ctx.close().catch(() => undefined);
-        return;
-      }
-      live.current.micWs = mic.ws;
-      live.current.stream = mic.stream;
-      live.current.ctx = mic.ctx;
-      live.current.urls.push(...mic.urls);
-      setNote(out ? "Remote sound is on" : "On (mic only)");
+      micRef.current = parts;
+      setMicOn(true);
+      setMicNote("Microphone live");
       void refreshHostDevices();
+      return true;
     } catch {
-      if (gen.current === g && live.current) {
-        setNote(out ? "Remote sound is on (no mic)" : "Sound unavailable — check mic permission");
-        if (!out) {
-          gen.current += 1;
-          stop();
-          setOn(false);
-        }
-      }
+      if (micGen.current === myGen) setMicNote("Mic unavailable — check permission");
+      return false;
     }
   };
+
+  const stopMic = () => {
+    micGen.current += 1;
+    const cur = micRef.current;
+    micRef.current = null;
+    if (cur) cleanupMic(cur);
+    setMicOn(false);
+  };
+
+  const toggleMic = () => {
+    if (micRef.current) {
+      stopMic();
+      setMicNote("Turn the microphone on/off");
+      return;
+    }
+    setMicNote("Requesting microphone…");
+    void attachMic(hostInIdRef.current, ++micGen.current);
+  };
+
+  useEffect(() => {
+    void loadDevices();
+    void refreshHostDevices();
+    // Output defaults to ON: try immediately, and once more on the first
+    // gesture (browsers block audio before any interaction).
+    const g = ++gen.current;
+    void enableOut(g);
+    const retry = () => {
+      if (outRef.current) {
+        tryUnmute();
+        return;
+      }
+      void enableOut(++gen.current);
+    };
+    window.addEventListener("pointerdown", retry, { once: true });
+    window.addEventListener("keydown", retry, { once: true });
+    // Clicks/keys inside the desktop iframe never reach the parent window
+    // (separate document), so DesktopViewer re-dispatches them here.
+    window.addEventListener("yd-gesture", retry);
+    const refresh = () => void refreshHostDevices();
+    navigator.mediaDevices.addEventListener("devicechange", refresh);
+    return () => {
+      gen.current += 1;
+      micGen.current += 1;
+      window.removeEventListener("pointerdown", retry);
+      window.removeEventListener("keydown", retry);
+      window.removeEventListener("yd-gesture", retry);
+      navigator.mediaDevices.removeEventListener("devicechange", refresh);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const changeVolume = (v: number) => {
     setVolume(v);
     if (outName) void setAudioVolume("sink", outName, v).catch(() => undefined);
   };
 
-  const changeHostInput = async (id: string) => {
+  const changeHostInput = (id: string) => {
     setHostInId(id);
-    if (!live.current) return; // applies when sound is toggled on
-    stopMicChain();
-    try {
-      const mic = await startMic(id || undefined);
-      if (!live.current) {
-        mic.ws.close();
-        mic.stream.getTracks().forEach((t) => t.stop());
-        void mic.ctx.close().catch(() => undefined);
-        return;
-      }
-      live.current.micWs = mic.ws;
-      live.current.stream = mic.stream;
-      live.current.ctx = mic.ctx;
-      live.current.urls.push(...mic.urls);
-      setNote("Remote sound is on");
-    } catch {
-      setNote("Mic unavailable — remote sound stays on without it");
-    }
+    hostInIdRef.current = id;
+    if (!micRef.current) return; // applies when the mic is toggled on
+    stopMic();
+    setMicNote("Switching microphone…");
+    void attachMic(id, ++micGen.current);
   };
 
   const changeHostOut = async (id: string) => {
     setHostOutId(id);
-    const audio = live.current?.audio;
+    hostOutIdRef.current = id;
+    const audio = outRef.current?.audio;
     if (audio && typeof audio.setSinkId === "function") {
       try {
         await audio.setSinkId(id);
@@ -285,8 +325,16 @@ export function SoundToggle() {
 
   return (
     <>
-      <button type="button" onClick={() => void toggle()} title={note} aria-pressed={on}>
-        {on ? "Sound on" : "Sound off"}
+      <button
+        type="button"
+        onClick={() => (outRef.current ? disableOut() : void enableOut(++gen.current))}
+        title={outState === "on" ? "Remote sound is on" : "Turn the remote sound on"}
+        aria-pressed={outState === "on"}
+      >
+        {outState === "on" ? "Sound on" : outState === "starting" ? "Sound…" : "Sound off"}
+      </button>
+      <button type="button" onClick={toggleMic} title={micNote} aria-pressed={micOn}>
+        {micOn ? "Mic on" : "Mic off"}
       </button>
       <label className="sound-row">
         <span>Volume</span>
@@ -320,7 +368,7 @@ export function SoundToggle() {
         <select
           aria-label="Input device (this PC)"
           value={hostInId}
-          onChange={(e) => void changeHostInput(e.target.value)}
+          onChange={(e) => changeHostInput(e.target.value)}
         >
           <option value="">Default</option>
           {hostIns.map((d, i) => (

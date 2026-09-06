@@ -31,10 +31,14 @@ default source `yd_mic_in` (`module-remap-source`). Expected latency 200–400ms
 
 ## Browser notes (Chrome-first)
 
-- The `<audio>` element needs a user gesture: sound starts on the
-  **Sound** toggle click. No gesture, no audio — browser policy, no workaround.
-- Mic permission is per origin and asked once; speaker and mic are
-  independent (one may work without the other — the toggle says which).
+- The rail has two independent buttons: **Sound** (speaker) and **Mic**.
+  Sound defaults to ON: it starts muted on page load (muted autoplay is
+  always allowed) and unmutes on the first click/keypress anywhere —
+  including inside the desktop, which re-dispatches gestures to the page.
+  Mic starts only when its button is pressed (permission is asked then).
+- Every async step has a timeout and every exit path closes its socket:
+  a timed-out attempt never leaks a server-side ffmpeg (one ffmpeg exists
+  per live `/out` connection, killed on toggle-off/disconnect).
 - Firefox/Safari: MediaSource Opus and AudioWorklet coverage varies;
   Chrome is the verified path. WebRTC (with TURN) is the planned upgrade
   for lower latency and wider deployability — see `docs/ROADMAP.md`.
