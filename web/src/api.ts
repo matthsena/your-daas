@@ -45,6 +45,38 @@ export function audioUrl(path: "out" | "mic"): string {
   return `${proto}://${window.location.host}/audio/${path}`;
 }
 
+export function audioUrlCandidates(path: "out" | "mic"): string[] {
+  // `localhost` may resolve to ::1 while the stack listens on IPv4 (or the
+  // reverse on odd setups). Try the page's host first, then the twin.
+  const first = audioUrl(path);
+  const u = new URL(first);
+  if (u.hostname === "localhost") {
+    u.hostname = "127.0.0.1";
+    return [first, u.toString()];
+  }
+  if (u.hostname === "127.0.0.1") {
+    u.hostname = "localhost";
+    return [first, u.toString()];
+  }
+  return [first];
+}
+
+export async function audioHttpProbe(path: "out" | "mic"): Promise<string> {
+  // A plain GET on a WS endpoint returns a short plain-text diagnosis
+  // (e.g. why the handshake was rejected). Same origin, no CORS issues.
+  for (const url of audioUrlCandidates(path)) {
+    try {
+      const res = await fetch(url.replace(/^ws/, "http"));
+      const body = (await res.text()).trim();
+      if (body) return `HTTP ${res.status}: ${body.slice(0, 160)}`;
+      return `HTTP ${res.status} (empty)`;
+    } catch {
+      /* try next candidate */
+    }
+  }
+  return "unreachable";
+}
+
 export interface AudioDevice {
   name: string;
   description: string;

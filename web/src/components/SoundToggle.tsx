@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  audioUrl,
+  audioHttpProbe,
+  audioUrlCandidates,
   listAudioDevices,
   setAudioVolume,
 } from "../api";
@@ -99,12 +100,53 @@ export function SoundToggle() {
     void parts.ctx.close().catch(() => undefined);
   };
 
+  // Open the WS trying each host candidate (localhost <-> 127.0.0.1).
+  // Resolves on open; rejects after every candidate fails or times out.
+  // No server state exists before open, so falling through is side-effect free.
+  const openWs = (path: "out" | "mic", timeoutMs: number): Promise<WebSocket> =>
+    new Promise((resolve, reject) => {
+      const urls = audioUrlCandidates(path);
+      let i = 0;
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          reject(new Error("audio channel timeout"));
+        }
+      }, timeoutMs);
+      const attempt = () => {
+        if (settled) return;
+        if (i >= urls.length) {
+          settled = true;
+          clearTimeout(timer);
+          reject(new Error("audio channel failed"));
+          return;
+        }
+        const ws = new WebSocket(urls[i++]);
+        ws.binaryType = "arraybuffer";
+        ws.onopen = () => {
+          if (settled) {
+            try { ws.close(); } catch { /* ignore */ }
+            return;
+          }
+          settled = true;
+          clearTimeout(timer);
+          resolve(ws);
+        };
+        ws.onerror = () => {
+          try { ws.close(); } catch { /* ignore */ }
+          attempt();
+        };
+      };
+      attempt();
+    });
+
   const startOut = async (tracker?: { ws: WebSocket | null }): Promise<OutLive> => {
     const urls: string[] = [];
     const audio = new Audio();
     // Muted autoplay is always allowed: start silent, unmute on gesture.
     audio.muted = true;
-    const ws = new WebSocket(audioUrl("out"));
+    const ws = await openWs("out", 8000);
     if (tracker) tracker.ws = ws;
     ws.binaryType = "arraybuffer";
     const ready = new Promise<void>((resolve, reject) => {
@@ -178,10 +220,18 @@ export function SoundToggle() {
     };
     let parts: OutLive | null = null;
     try {
-      parts = await withTimeout(startOut(attempt), 10000, "speaker timeout");
+      parts = await withTimeout(startOut(attempt), 20000, "speaker timeout");
     } catch (e) {
       parts = null;
-      if (gen.current === myGen) setOutErr(describeOutErr(e));
+      if (gen.current === myGen) {
+        let msg = describeOutErr(e);
+        try {
+          msg += ` — server: ${await audioHttpProbe("out")}`;
+        } catch {
+          /* probe is best-effort */
+        }
+        setOutErr(msg);
+      }
     }
     if (!parts || gen.current !== myGen || outRef.current) {
       sweep();
@@ -221,12 +271,7 @@ export function SoundToggle() {
     const ctx = new AudioContext({ sampleRate: 16000 });
     const urls = [URL.createObjectURL(new Blob([MIC_WORKLET], { type: "application/javascript" }))];
     await ctx.audioWorklet.addModule(urls[0]);
-    const ws = new WebSocket(audioUrl("mic"));
-    ws.binaryType = "arraybuffer";
-    await new Promise<void>((resolve, reject) => {
-      ws.onopen = () => resolve();
-      ws.onerror = () => reject(new Error("mic channel failed"));
-    });
+    const ws = await openWs("mic", 8000);
     const src = ctx.createMediaStreamSource(stream);
     const node = new AudioWorkletNode(ctx, "yd-mic");
     const mute = ctx.createGain();
