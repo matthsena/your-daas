@@ -34,6 +34,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     dbus-x11 \
     xdg-utils \
     sudo \
+    pulseaudio \
+    pulseaudio-utils \
+    ffmpeg \
+    python3-websockets \
   && rm -rf /var/lib/apt/lists/* \
   && apt-get update \
   && wget -q -O /tmp/google-chrome.deb \

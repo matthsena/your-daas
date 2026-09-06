@@ -36,6 +36,26 @@ if command -v dbus-launch >/dev/null 2>&1; then
   eval "$(dbus-launch --sh-syntax)"
 fi
 
+# Headless audio: PulseAudio with a virtual speaker (default sink) and a
+# virtual microphone fed by the browser (default source). See docs/AUDIO.md.
+# No system bus and no /run/user/<uid> here (unprivileged user), so the
+# PulseAudio runtime lives under the service tmp dir.
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp/yourdaas/run}"
+mkdir -p "$XDG_RUNTIME_DIR"
+chmod 700 "$XDG_RUNTIME_DIR"
+pulseaudio --exit-idle-time=-1 --disallow-exit >/tmp/yourdaas/pulseaudio.log 2>&1 &
+for _ in $(seq 1 50); do
+  if pactl info >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.1
+done
+pactl load-module module-null-sink sink_name=yd_out sink_properties=device.description=YourDaaS_Speakers >/dev/null || true
+pactl set-default-sink yd_out >/dev/null || true
+pactl load-module module-null-sink sink_name=yd_mic sink_properties=device.description=YourDaaS_MicIn >/dev/null || true
+pactl load-module module-remap-source master=yd_mic.monitor source_name=yd_mic_in source_properties=device.description=YourDaaS_Microphone >/dev/null || true
+pactl set-default-source yd_mic_in >/dev/null || true
+
 # Full XFCE session (wm + panel + desktop) on the persistent HOME.
 xfce4-session >/tmp/yourdaas/xfce.log 2>&1 &
 
