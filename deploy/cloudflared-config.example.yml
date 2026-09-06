@@ -1,0 +1,23 @@
+# Cloudflare Tunnel wiring (dashboard-managed flow — recommended)
+#
+# 1. Zero Trust dashboard → Networks → Tunnels → Create → Cloudflared.
+#    Copy the token into .env as TUNNEL_TOKEN (never commit .env).
+# 2. In the tunnel's Public Hostnames, add:
+#      desktop.<your-domain>  →  http://web:80
+#    (The cloudflared service joins the compose network, so `web` resolves.)
+# 3. Start the stack with the prod overlay:
+#      docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#    The overlay drops all published ports; traffic only arrives via the tunnel.
+# 4. Zero Trust → Access → add an application for desktop.<your-domain>
+#    (e.g. allow your email, require 2FA). This is the login in front of
+#    noVNC until the product ships built-in auth.
+#
+# The static file below is for the CLI-managed alternative
+# (`cloudflared tunnel create` + DNS CNAME). Prefer the dashboard flow.
+tunnel: TUNNEL_ID_FROM_DASHBOARD_OR_CLI
+credentials-file: /etc/cloudflared/tunnel-credentials.json
+
+ingress:
+  - hostname: desktop.example.com
+    service: http://web:80
+  - service: http_status:404
