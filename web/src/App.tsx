@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { DesktopViewer } from "./components/DesktopViewer";
 import { FileManager } from "./components/FileManager";
+import { SoundToggle } from "./components/SoundToggle";
 
 export function App() {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -46,6 +47,7 @@ export function App() {
           <button type="button" onClick={fullscreen}>
             Fullscreen
           </button>
+          <SoundToggle />
           <button type="button" onClick={() => setFilesOpen(true)}>
             Files
           </button>

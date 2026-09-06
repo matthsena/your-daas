@@ -38,3 +38,9 @@ export function desktopUrl(viewOnly: boolean): string {
   // Custom chromeless noVNC viewer (no popups/toolbar). Served by the container.
   return `/novnc/yourdaas.html?view_only=${viewOnly ? "true" : "false"}`;
 }
+
+export function audioUrl(path: "out" | "mic"): string {
+  // Duplex audio bridge (see docs/AUDIO.md). Same-origin WS via the proxy.
+  const proto = window.location.protocol === "https:" ? "wss" : "ws";
+  return `${proto}://${window.location.host}/audio/${path}`;
+}
