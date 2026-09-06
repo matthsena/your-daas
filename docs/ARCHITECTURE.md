@@ -17,7 +17,7 @@ Inside `computer` (`computer/start.sh` is PID 1's script):
 
 ```text
 Xvfb :1 (1280x800) ──► xfce4-session (wm + panel + desktop, 1 workspace)
-                    ──► plank dock (3 pins: Chrome, Thunar, terminal)
+                    ──► plank dock (3 pins: Brave, Thunar, terminal)
                     ──► x11vnc :5900 (bound to 127.0.0.1 inside netns; published on loopback)
                     ──► websockify :6080 (VNC→WebSocket, serves /usr/share/novnc)
                     ──► file-api :7071 (Python stdlib only, jailed to $HOME)
@@ -28,8 +28,8 @@ autocutsel ×2 bridges X CLIPBOARD ↔ CUTBUFFER ↔ PRIMARY
 
 | Path | Role |
 |---|---|
-| `computer/Dockerfile` | Debian + XFCE + Chrome + VNC stack, `user` (uid 1000), canonical `.desktop` launchers |
-| `computer/start.sh` | boot order, plank pins via dconf, Chrome Singleton lock cleanup |
+| `computer/Dockerfile` | Debian + XFCE + Brave + VNC stack (1.35GB image), `user` (uid 1000), canonical `.desktop` launchers |
+| `computer/start.sh` | boot order, plank pins via dconf, Brave Singleton lock cleanup |
 | `computer/viewer.html` | chromeless noVNC page (`yourdaas.html` in the image): keyboard focus, right-click passthrough, clipboard bridge |
 | `computer/file-api.py` | `GET /api/health, /api/files, /api/file`, `POST /api/mkdir`; path-jailed, no auth (loopback only) |
 | `computer/audio-ws.py` | duplex audio: `/out` Opus/WebM speaker stream, `/mic` PCM16 mic injection; no auth (loopback only) |
@@ -39,7 +39,7 @@ autocutsel ×2 bridges X CLIPBOARD ↔ CUTBUFFER ↔ PRIMARY
 
 ## Data & persistence
 
-- Named volume `yourdaas-home` → `/home/user`: files, Chrome profile, XFCE/plank config. Survives `down`, `up --build`, image rebuilds.
+- Named volume `yourdaas-home` → `/home/user`: files, Brave profile, XFCE/plank config. Survives `down`, `up --build`, image rebuilds.
 - `down -v` destroys it on purpose (pristine-boot recipe).
 - Anything outside `/home/user` is ephemeral.
 

@@ -1,6 +1,6 @@
 # YourDaaS — your PC in the cloud
 
-Desktop-as-a-Service for individuals: a full Linux desktop (XFCE + Chrome) running in a container, accessible from any browser via noVNC. Your files persist in a per-user volume; the host clock, clipboard (text), and a minimal web client are built in.
+Desktop-as-a-Service for individuals: a full Linux desktop (XFCE + Brave Origin) running in a container, accessible from any browser via noVNC. Your files persist in a per-user volume; the host clock, clipboard (text), and a minimal web client are built in.
 
 > **Status:** local MVP. No auth yet — everything binds to `127.0.0.1` only. Read [SECURITY.md](SECURITY.md) before exposing anything.
 
@@ -25,7 +25,7 @@ docker compose down -v && docker compose up --build -d   # wipes home volume
 
 ## Layout
 
-- `computer/` — desktop image: Debian + Xvfb + XFCE + plank dock + Chrome + x11vnc + noVNC page + file API.
+- `computer/` — desktop image: Debian + Xvfb + XFCE + plank dock + Brave + x11vnc + noVNC page + file API.
 - `web/` — Vite + React client embedding the desktop (iframe) plus a minimal file manager.
 - `deploy/` — production topology: Cloudflare Tunnel example, R2 backup script, VPS sizing guide.
 - `docs/` — architecture, clipboard design, troubleshooting, roadmap.
