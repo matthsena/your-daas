@@ -11,10 +11,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xfce4-settings \
     xfce4-terminal \
     thunar \
-    mousepad \
     xdotool \
     x11-utils \
-    imagemagick \
     novnc \
     websockify \
     python3 \
@@ -22,7 +20,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     procps \
     bash \
     wget \
-    papirus-icon-theme \
     plank \
     libglib2.0-bin \
     dconf-cli \

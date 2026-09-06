@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Same as the Debian default, only switches the icon theme to Papirus-Dark.
+  Same as the Debian default (Adwaita icons).
 -->
 
 <channel name="xsettings" version="1.0">
   <property name="Net" type="empty">
     <property name="ThemeName" type="string" value="Xfce"/>
-    <property name="IconThemeName" type="string" value="Papirus-Dark"/>
+    <property name="IconThemeName" type="string" value="Adwaita"/>
     <property name="DoubleClickTime" type="int" value="400"/>
     <property name="DoubleClickDistance" type="int" value="5"/>
     <property name="DndDragThreshold" type="int" value="8"/>
