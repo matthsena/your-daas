@@ -1,0 +1,42 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compose configs are valid
+        run: |
+          docker compose config --quiet
+          TUNNEL_TOKEN=dummy docker compose -f docker-compose.yml -f docker-compose.prod.yml config --quiet
+
+      - name: Shell and Python syntax
+        run: |
+          bash -n computer/start.sh
+          bash -n deploy/r2-backup.sh
+          python3 -m py_compile computer/file-api.py
+
+      - name: Build computer image
+        run: docker build -t yourdaas/computer:ci ./computer
+
+      - name: Build web client
+        working-directory: web
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - name: Build web image
+        run: docker build -t yourdaas/web:ci ./web
+
+      - name: No secrets in tree
+        # ci.yml and r2-backup.sh name the patterns/env-vars themselves;
+        # they carry no values, so they are excluded from their own scan.
+        run: |
+          ! grep -rniE "BEGIN [A-Z ]*PRIVATE KEY|AKIA[0-9A-Z]{16}" \
+            --exclude-dir=.github --exclude-dir=node_modules --exclude-dir=dist \
+            --exclude=r2-backup.sh . || exit 1
