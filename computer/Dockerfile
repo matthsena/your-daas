@@ -57,6 +57,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 ENV DISPLAY=:1
 ENV HOME=/home/user
+# PulseAudio runtime lives under the service tmp dir (no /run/user/<uid> for
+# an unprivileged user). As ENV (not just start.sh export) it also covers
+# `docker exec` sessions, so every process finds the daemon.
+ENV XDG_RUNTIME_DIR=/tmp/yourdaas/run
 WORKDIR /home/user
 
 COPY --chmod=755 start.sh /usr/local/bin/yourdaas-computer
