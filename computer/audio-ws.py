@@ -17,19 +17,23 @@ PORT = int(os.environ.get("AUDIO_PORT", "7072"))
 OUT_SOURCE = os.environ.get("YD_OUT", "yd_out.monitor")
 MIC_SINK = os.environ.get("YD_MIC", "yd_mic")
 
+# Voice-grade 24kHz mono, tuned for latency over efficiency: 10ms Opus
+# frames, ~20ms WebM clusters (more mux overhead, far less wait).
 FFMPEG_OUT = [
     "ffmpeg", "-hide_banner", "-loglevel", "warning",
     "-f", "pulse", "-i", OUT_SOURCE,
     "-ac", "1", "-ar", "24000",
-    "-c:a", "libopus", "-b:a", "40k", "-application", "voip",
+    "-c:a", "libopus", "-b:a", "48k",
+    "-application", "voip", "-frame_duration", "10",
     "-f", "webm",
-    "-cluster_size_limit", "2048", "-cluster_time_limit", "100",
+    "-cluster_size_limit", "512", "-cluster_time_limit", "20",
     "-flush_packets", "1",
     "pipe:1",
 ]
 PACAT_MIC = [
     "pacat", "--playback", "-d", MIC_SINK,
     "--format=s16le", "--rate=16000", "--channels=1",
+    "--latency-msec=30",
 ]
 
 log = logging.getLogger("audio-ws")

@@ -8,14 +8,16 @@ headless PulseAudio.
 
 **Out (Linux → headphones):** apps play to the default sink `yd_out`
 (a null sink) → `ffmpeg` captures `yd_out.monitor`, encodes Opus 24kHz mono
-(~40kbps) as low-latency WebM clusters → WebSocket `/out` → browser
-`MediaSource` (`audio/webm;codecs=opus`) → `<audio>` element.
-Expected latency 0.5–1s: fine for video and calls, not for games.
+(~48kbps, 10ms frames, `voip`) as ~20ms WebM clusters → WebSocket `/out` →
+browser `MediaSource` (`audio/webm;codecs=opus`) → `<audio>` element.
+Measured end-to-end (container signal → decoded host audio, host decode
+included): median ~135ms, range 80–300ms. Smaller clusters cost mux
+overhead; don't shrink them further without raising the bitrate.
 
 **In (mic → Linux):** browser `getUserMedia` (16kHz mono, echo cancellation)
 → `AudioWorklet` converts float32 → PCM16 → WebSocket `/mic` → server pipes
-frames into `pacat --playback` on sink `yd_mic`, exposed to apps as the
-default source `yd_mic_in` (`module-remap-source`). Expected latency 200–400ms.
+frames into `pacat --playback` on sink `yd_mic` (`--latency-msec=30`),
+exposed to apps as the default source `yd_mic_in` (`module-remap-source`).
 
 ## Container notes
 
