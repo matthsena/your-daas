@@ -69,10 +69,6 @@ export function FileManager() {
   return (
     <section className="panel">
       <header className="panel-head">
-        <div>
-          <h2>Files</h2>
-          <p>Minimal manager over the container file API. Jailed to home.</p>
-        </div>
         <div className="row">
           <button type="button" onClick={() => void load(parent(path))}>
             ↑ Up

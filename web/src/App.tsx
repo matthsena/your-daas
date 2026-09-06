@@ -1,38 +1,72 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { DesktopViewer } from "./components/DesktopViewer";
 import { FileManager } from "./components/FileManager";
 
 export function App() {
-  const [tab, setTab] = useState<"desktop" | "files">("desktop");
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [viewOnly, setViewOnly] = useState(false);
+  const [nonce, setNonce] = useState(0);
+  const [filesOpen, setFilesOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+
+  const fullscreen = () => {
+    const el = wrapRef.current;
+    if (!el) return;
+    if (document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => undefined);
+    } else {
+      void el.requestFullscreen().catch(() => undefined);
+    }
+  };
 
   return (
-    <main className="shell">
-      <header className="top">
-        <div>
-          <h1>YourDaaS — your PC in the browser</h1>
-          <p>Debian + Xvfb + XFCE + Chrome via noVNC, plus a minimal file manager.</p>
-        </div>
-        <nav className="tabs" aria-label="Client navigation">
-          <button
-            type="button"
-            className={tab === "desktop" ? "active" : ""}
-            onClick={() => setTab("desktop")}
-          >
-            Desktop
+    <div className="layout">
+      <aside className={menuOpen ? "side open" : "side"} aria-label="Command menu">
+        <button
+          type="button"
+          className="menu-toggle"
+          aria-expanded={menuOpen}
+          aria-label={menuOpen ? "Collapse menu" : "Expand menu"}
+          onClick={() => setMenuOpen((v) => !v)}
+        >
+          {menuOpen ? "✕" : "☰"}
+        </button>
+        <div className="menu">
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={viewOnly}
+              onChange={(e) => setViewOnly(e.target.checked)}
+            />
+            View only
+          </label>
+          <button type="button" onClick={() => setNonce((n) => n + 1)}>
+            Reconnect
           </button>
-          <button
-            type="button"
-            className={tab === "files" ? "active" : ""}
-            onClick={() => setTab("files")}
-          >
+          <button type="button" onClick={fullscreen}>
+            Fullscreen
+          </button>
+          <button type="button" onClick={() => setFilesOpen(true)}>
             Files
           </button>
-        </nav>
-      </header>
-      {tab === "desktop" ? <DesktopViewer /> : <FileManager />}
-      <footer>
-        Local MVP without auth — only use on <code>127.0.0.1</code>. Do not expose to the internet.
-      </footer>
-    </main>
+        </div>
+      </aside>
+
+      <main className="stage">
+        <DesktopViewer viewOnly={viewOnly} nonce={nonce} wrapRef={wrapRef} />
+      </main>
+
+      {filesOpen && (
+        <div className="drawer" role="dialog" aria-label="Files">
+          <div className="drawer-head">
+            <strong>Files</strong>
+            <button type="button" onClick={() => setFilesOpen(false)} aria-label="Close files">
+              ✕
+            </button>
+          </div>
+          <FileManager />
+        </div>
+      )}
+    </div>
   );
 }

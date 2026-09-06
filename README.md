@@ -13,7 +13,7 @@ cp .env.example .env
 docker compose up --build -d
 ```
 
-- Web client: http://127.0.0.1:5174 (Desktop + Files tabs)
+- Web client: http://127.0.0.1:5174 (desktop with a collapsible command rail; Files opens as a slide-over)
 - noVNC direct: http://127.0.0.1:6080/yourdaas.html
 - File API health: http://127.0.0.1:7071/api/health
 
