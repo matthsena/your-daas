@@ -1,5 +1,11 @@
-import { useRef, useState } from "react";
-import { audioUrl } from "../api";
+import { useEffect, useRef, useState } from "react";
+import {
+  audioUrl,
+  listAudioDevices,
+  setAudioDefault,
+  setAudioVolume,
+  type AudioDevice,
+} from "../api";
 
 const MIC_WORKLET = `
 registerProcessor("yd-mic", class extends AudioWorkletProcessor {
@@ -30,7 +36,33 @@ interface Live {
 export function SoundToggle() {
   const [on, setOn] = useState(false);
   const [note, setNote] = useState("Turn the remote sound on/off");
+  const [sinks, setSinks] = useState<AudioDevice[]>([]);
+  const [sources, setSources] = useState<AudioDevice[]>([]);
+  const [outName, setOutName] = useState("");
+  const [inName, setInName] = useState("");
+  const [volume, setVolume] = useState(100);
   const live = useRef<Live | null>(null);
+
+  const loadDevices = async () => {
+    try {
+      const dev = await listAudioDevices();
+      setSinks(dev.sinks);
+      setSources(dev.sources);
+      const out = dev.sinks.find((d) => d.default) ?? dev.sinks[0];
+      const inp = dev.sources.find((d) => d.default) ?? dev.sources[0];
+      if (out) {
+        setOutName(out.name);
+        setVolume(out.volume);
+      }
+      if (inp) setInName(inp.name);
+    } catch {
+      /* audio service unreachable; toggle will report it */
+    }
+  };
+
+  useEffect(() => {
+    void loadDevices();
+  }, []);
 
   const stop = () => {
     const cur = live.current;
@@ -145,9 +177,74 @@ export function SoundToggle() {
     setNote(problems.length ? `On (${problems.join(", ")} unavailable)` : "Remote sound is on");
   };
 
+  const changeVolume = (v: number) => {
+    setVolume(v);
+    if (outName) void setAudioVolume("sink", outName, v).catch(() => undefined);
+  };
+
+  const changeDefault = async (kind: "sink" | "source", name: string) => {
+    if (!name) return;
+    try {
+      await setAudioDefault(kind, name);
+      await loadDevices();
+    } catch {
+      /* keep previous selection */
+    }
+  };
+
   return (
-    <button type="button" onClick={() => void toggle()} title={note} aria-pressed={on}>
-      {on ? "Sound on" : "Sound off"}
-    </button>
+    <>
+      <button type="button" onClick={() => void toggle()} title={note} aria-pressed={on}>
+        {on ? "Sound on" : "Sound off"}
+      </button>
+      <label className="sound-row">
+        <span>Volume</span>
+        <input
+          type="range"
+          min={0}
+          max={100}
+          value={volume}
+          aria-label="Output volume"
+          onChange={(e) => changeVolume(Number(e.target.value))}
+        />
+        <span className="sound-val">{volume}</span>
+      </label>
+      <label className="sound-row">
+        <span>Output</span>
+        <select
+          aria-label="Output device"
+          value={outName}
+          onChange={(e) => {
+            setOutName(e.target.value);
+            const dev = sinks.find((d) => d.name === e.target.value);
+            if (dev) setVolume(dev.volume);
+            void changeDefault("sink", e.target.value);
+          }}
+        >
+          {sinks.map((d) => (
+            <option key={d.name} value={d.name}>
+              {d.description}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="sound-row">
+        <span>Input</span>
+        <select
+          aria-label="Input device"
+          value={inName}
+          onChange={(e) => {
+            setInName(e.target.value);
+            void changeDefault("source", e.target.value);
+          }}
+        >
+          {sources.map((d) => (
+            <option key={d.name} value={d.name}>
+              {d.description}
+            </option>
+          ))}
+        </select>
+      </label>
+    </>
   );
 }

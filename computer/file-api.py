@@ -5,15 +5,93 @@ GET  /api/health -> {"ok": true}
 GET  /api/files?path=/home/user -> {"path":..., "entries":[{"name","path","kind":"file"|"dir","size"}]}
 GET  /api/file?path=... -> {"path":..., "content": "..."} (text up to 512KB)
 POST /api/mkdir {"path": "..."} -> {"ok": true}
+GET  /api/audio/devices -> {"sinks":[...], "sources":[...]} (name, description, volume, mute, default)
+POST /api/audio/volume {"kind":"sink"|"source","name":...,"volume":0-100} -> {"ok": true}
+POST /api/audio/default {"kind":"sink"|"source","name":...} -> {"ok": true} (moves live streams)
 """
 
 import json
 import os
+import re
+import subprocess
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
 
 HOME = os.environ.get("HOME", "/home/user")
 MAX_TEXT_BYTES = 512 * 1024
+
+NAME_RE = re.compile(r"^[A-Za-z0-9_.@-]+$")
+
+
+def pa(*args):
+    return subprocess.run(
+        ["pactl", *args], capture_output=True, text=True, timeout=10
+    )
+
+
+def pa_percent(device):
+    try:
+        vols = device.get("volume", {}).values()
+        pcts = [
+            int(str(v.get("value_percent", "0%")).rstrip("%"))
+            for v in vols
+            if isinstance(v, dict)
+        ]
+        return max(pcts) if pcts else 0
+    except (ValueError, AttributeError):
+        return 0
+
+
+def audio_devices():
+    sinks = json.loads(pa("--format=json", "list", "sinks").stdout or "[]")
+    sources = json.loads(pa("--format=json", "list", "sources").stdout or "[]")
+    default_sink = pa("get-default-sink").stdout.strip()
+    default_source = pa("get-default-source").stdout.strip()
+
+    def shape(devs, default):
+        out = []
+        for d in devs:
+            out.append({
+                "name": d.get("name", ""),
+                "description": d.get("description", "") or d.get("name", ""),
+                "volume": pa_percent(d),
+                "mute": bool(d.get("mute", False)),
+                "monitor": "monitor" in (d.get("name", "")),
+                "default": d.get("name") == default,
+            })
+        return out
+
+    return {"sinks": shape(sinks, default_sink), "sources": shape(sources, default_source)}
+
+
+def audio_set_volume(kind, name, volume):
+    if kind not in ("sink", "source") or not NAME_RE.match(name):
+        raise ValueError("invalid target")
+    volume = int(volume)
+    if not 0 <= volume <= 100:
+        raise ValueError("volume out of range")
+    r = pa(f"set-{kind}-volume", name, f"{volume}%")
+    if r.returncode != 0:
+        raise ValueError(r.stderr.strip() or "pactl failed")
+
+
+def audio_set_default(kind, name):
+    if kind not in ("sink", "source") or not NAME_RE.match(name):
+        raise ValueError("invalid target")
+    r = pa(f"set-default-{kind}", name)
+    if r.returncode != 0:
+        raise ValueError(r.stderr.strip() or "pactl failed")
+    # Move live streams so apps follow the new default immediately.
+    if kind == "sink":
+        for line in pa("list", "short", "sink-inputs").stdout.splitlines():
+            parts = line.split()
+            if parts:
+                pa("move-sink-input", parts[0], name)
+    else:
+        for line in pa("list", "short", "source-outputs").stdout.splitlines():
+            parts = line.split()
+            if parts:
+                pa("move-source-output", parts[0], name)
 
 
 def safe_path(raw: str) -> str:
@@ -97,6 +175,11 @@ class Handler(BaseHTTPRequestHandler):
             except OSError as e:
                 return self.send_json({"error": str(e)}, 500)
             return self.send_json({"path": target, "content": content})
+        if parsed.path == "/api/audio/devices":
+            try:
+                return self.send_json(audio_devices())
+            except Exception as e:
+                return self.send_json({"error": str(e)}, 500)
         return self.send_json({"error": "unknown route"}, 404)
 
     def do_POST(self):
@@ -118,6 +201,29 @@ class Handler(BaseHTTPRequestHandler):
             except OSError as e:
                 return self.send_json({"error": str(e)}, 500)
             return self.send_json({"ok": True, "path": target})
+        if parsed.path == "/api/audio/volume":
+            try:
+                audio_set_volume(
+                    str(payload.get("kind") or ""),
+                    str(payload.get("name") or ""),
+                    payload.get("volume"),
+                )
+            except (ValueError, TypeError) as e:
+                return self.send_json({"error": str(e) or "invalid request"}, 400)
+            except Exception as e:
+                return self.send_json({"error": str(e)}, 500)
+            return self.send_json({"ok": True})
+        if parsed.path == "/api/audio/default":
+            try:
+                audio_set_default(
+                    str(payload.get("kind") or ""),
+                    str(payload.get("name") or ""),
+                )
+            except (ValueError, TypeError) as e:
+                return self.send_json({"error": str(e) or "invalid request"}, 400)
+            except Exception as e:
+                return self.send_json({"error": str(e)}, 500)
+            return self.send_json({"ok": True})
         return self.send_json({"error": "unknown route"}, 404)
 
 

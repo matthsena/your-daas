@@ -50,6 +50,20 @@ button:hover, .button:hover { background: #303036; }
 .side.open .menu { display: flex; }
 .check { display: flex; gap: 8px; align-items: center; font-size: 14px; padding: 8px 4px; }
 
+/* Sound controls inside the command menu. */
+.sound-row { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+.sound-row input[type="range"] { width: 100%; accent-color: var(--accent); padding: 0; }
+.sound-row .sound-val { font-size: 12px; }
+select {
+  background: #26262b;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 14px;
+  max-width: 100%;
+}
+
 .stage { flex: 1; min-width: 0; padding: 0.5rem; background: var(--bg); }
 
 .screen-wrap {

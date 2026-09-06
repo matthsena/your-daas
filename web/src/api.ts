@@ -44,3 +44,35 @@ export function audioUrl(path: "out" | "mic"): string {
   const proto = window.location.protocol === "https:" ? "wss" : "ws";
   return `${proto}://${window.location.host}/audio/${path}`;
 }
+
+export interface AudioDevice {
+  name: string;
+  description: string;
+  volume: number;
+  mute: boolean;
+  monitor: boolean;
+  default: boolean;
+}
+
+export async function listAudioDevices(): Promise<{ sinks: AudioDevice[]; sources: AudioDevice[] }> {
+  const res = await fetch(`${base}/api/audio/devices`);
+  return json(res);
+}
+
+export async function setAudioVolume(kind: "sink" | "source", name: string, volume: number): Promise<void> {
+  const res = await fetch(`${base}/api/audio/volume`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ kind, name, volume }),
+  });
+  await json(res);
+}
+
+export async function setAudioDefault(kind: "sink" | "source", name: string): Promise<void> {
+  const res = await fetch(`${base}/api/audio/default`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ kind, name }),
+  });
+  await json(res);
+}

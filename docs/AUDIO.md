@@ -47,3 +47,15 @@ docker exec <computer> sh -c 'export XDG_RUNTIME_DIR=/tmp/yourdaas/run; pactl in
 # out: valid Opus/WebM bytes on the socket (see /tmp/ws-audio-test.py pattern)
 # mic: inject a 440Hz sine on /mic, record yd_mic.monitor with parec, check RMS
 ```
+
+## Control API (volume + device selects)
+
+The file API exposes PulseAudio controls (same loopback-only posture):
+
+- `GET /api/audio/devices` → sinks/sources with volume, mute, default flags.
+- `POST /api/audio/volume {"kind","name","volume"}` → 0–100, name-validated.
+- `POST /api/audio/default {"kind","name"}` → switches the default **and
+  moves live streams** so apps follow immediately.
+
+The rail menu renders a volume slider plus Output/Input selects from these
+endpoints; the slider drives the selected output sink.
