@@ -20,6 +20,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     procps \
     bash \
     wget \
+    curl \
+    git \
+    openssh-client \
+    rsync \
+    unzip \
+    zip \
+    iputils-ping \
+    iproute2 \
+    dnsutils \
+    jq \
+    tree \
+    tmux \
+    nano \
     plank \
     libglib2.0-bin \
     dconf-cli \
