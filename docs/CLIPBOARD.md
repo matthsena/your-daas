@@ -1,4 +1,4 @@
-# Clipboard design (text only)
+# Clipboard design (text + images)
 
 ## How it flows
 
@@ -30,3 +30,22 @@
   Linux clipboard after your `Ctrl+V`).
 - Stuck after an upgrade? Hard-reload the viewer (`Ctrl+F5`): a cached
   `yourdaas.html` keeps old clipboard code and old buttons.
+
+## Rich clipboard: images (files are still out of scope)
+
+VNC clipboard is text-only, so images travel on the file-api X bridge
+(`xclip`, PNG only, 5MB cap — text keeps flowing via RFB, untouched).
+
+- **Linux → PC:** the viewer polls `GET /api/clipboard` every 2s (hash of
+  the X image). New hash → fetch PNG → `ClipboardItem` write; if the
+  browser blocks the gestureless write, a transient panel shows a thumbnail
+  + copy button (one click).
+- **PC → Linux:** `Ctrl+V` tries `clipboard.read()` for `image/*` first
+  (the keydown is the gesture; the browser asks once), normalizes to PNG
+  via canvas, POSTs to `/api/clipboard/image` (xclip owns the X selection),
+  then sends the remote `Ctrl+V`. No image (or denied) falls through to
+  the text path — the `paste` event still handles plain text.
+- Server notes: `xclip -i` forks to serve the selection while holding its
+  fds, so the endpoint uses `Popen(..., DEVNULL)` + `communicate()` instead
+  of `capture_output` (which hangs forever). `GET /api/clipboard/image`
+  serves raw bytes with `Content-Type: image/png`.

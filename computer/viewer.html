@@ -111,17 +111,27 @@
         e.preventDefault();
       });
 
-      // ---- Two-way clipboard (text), no buttons needed ----
+      // ---- Two-way clipboard (text + images), no buttons needed ----
       // Ctrl+C INSIDE Linux: x11vnc pushes the text via the RFB
       // `clipboard` event and we write it straight to the PC clipboard
       // (writes are allowed without a gesture in a secure context).
       // Ctrl+V IN the viewer: the keydown counts as user activation, so we
       // can read the PC clipboard and inject it into Linux (the browser
       // asks permission only the first time).
+      // Images (both directions) go through the file-api X bridge
+      // (docs/CLIPBOARD.md): VNC clipboard is text-only.
       const CTRL = 0xffe3;
       const KEY_V = 0x76;
       const clipView = document.getElementById("clipview");
       let lastRemote = "";
+      // file-api base: same host on :7071 in dev (viewer served on :6080),
+      // same-origin /api when proxied.
+      const apiBase = (() => {
+        const { protocol, hostname, port } = window.location;
+        if (port === "6080") return `${protocol}//${hostname}:7071`;
+        return "";
+      })();
+      let lastRemoteImg = "";
 
       function rfbReady() {
         return rfb && !rfb.viewOnly && typeof rfb.clipboardPasteFrom === "function";
@@ -155,6 +165,34 @@
           if (event.code !== "KeyV" || event.repeat) return;
           event.preventDefault();
           event.stopPropagation();
+          // Images first: clipboard.read() needs this keydown gesture.
+          // No image (or denied) falls through to the text path below.
+          try {
+            if (navigator.clipboard?.read) {
+              const items = await navigator.clipboard.read();
+              for (const item of items) {
+                const type = item.types.find((t) => t.startsWith("image/"));
+                if (!type) continue;
+                const png = await toPng(await item.getType(type));
+                if (!png) continue;
+                if (png.size > 5 * 1024 * 1024) {
+                  show("image too large (5MB max)");
+                  return;
+                }
+                const up = await fetch(`${apiBase}/api/clipboard/image`, {
+                  method: "POST",
+                  headers: { "Content-Type": "image/png" },
+                  body: png,
+                });
+                if (!up.ok) continue;
+                show("image sent to Linux");
+                sendRemotePaste();
+                return;
+              }
+            }
+          } catch {
+            /* denied/unavailable: fall through to text */
+          }
           try {
             const text = await navigator.clipboard?.readText();
             if (await pasteHostText(text)) show("pasted into Linux");
@@ -251,6 +289,89 @@
           showPanelFallback();
         }
       });
+      // Images copied INSIDE Linux: poll the X bridge (VNC carries no
+      // images). New hash -> fetch PNG -> write to the PC clipboard, else
+      // a transient panel with a thumbnail + copy button.
+      function toPng(blob) {
+        return new Promise((resolve) => {
+          const img = new Image();
+          const url = URL.createObjectURL(blob);
+          img.onload = () => {
+            try {
+              const c = document.createElement("canvas");
+              c.width = img.naturalWidth;
+              c.height = img.naturalHeight;
+              c.getContext("2d").drawImage(img, 0, 0);
+              c.toBlob((b) => {
+                URL.revokeObjectURL(url);
+                resolve(b);
+              }, "image/png");
+            } catch {
+              URL.revokeObjectURL(url);
+              resolve(null);
+            }
+          };
+          img.onerror = () => {
+            URL.revokeObjectURL(url);
+            resolve(null);
+          };
+          img.src = url;
+        });
+      }
+      function showImagePanel(blob) {
+        clipView.innerHTML = "";
+        const img = document.createElement("img");
+        img.src = URL.createObjectURL(blob);
+        img.alt = "Image copied inside Linux";
+        img.style.cssText = "max-width:100%;max-height:120px;display:block;border-radius:6px;";
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = "copy image";
+        btn.addEventListener("click", async () => {
+          try {
+            await navigator.clipboard?.write([new ClipboardItem({ "image/png": blob })]);
+            show("image copied to this PC");
+            clipView.classList.remove("show");
+          } catch {
+            show("right-click the image and copy it");
+          }
+        });
+        clipView.appendChild(img);
+        clipView.appendChild(btn);
+        clipView.classList.add("show");
+        clearTimeout(clipView.t);
+        clipView.t = setTimeout(() => clipView.classList.remove("show"), 15000);
+      }
+      async function pollRemoteImage() {
+        if (rfb.viewOnly || document.hidden) return;
+        let st = null;
+        try {
+          const res = await fetch(`${apiBase}/api/clipboard`);
+          if (!res.ok) return;
+          st = await res.json();
+        } catch {
+          return;
+        }
+        if (!st || st.kind !== "image" || !st.hash || st.hash === lastRemoteImg) return;
+        lastRemoteImg = st.hash;
+        let blob = null;
+        try {
+          const res = await fetch(`${apiBase}/api/clipboard/image`);
+          if (res.ok) blob = await res.blob();
+        } catch {
+          blob = null;
+        }
+        if (!blob) return;
+        try {
+          await navigator.clipboard?.write([new ClipboardItem({ "image/png": blob })]);
+          show("image copied to this PC");
+        } catch {
+          showImagePanel(blob);
+        }
+      }
+      setInterval(() => {
+        void pollRemoteImage();
+      }, 2000);
     </script>
   </head>
   <body>
