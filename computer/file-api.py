@@ -8,8 +8,12 @@ POST /api/mkdir {"path": "..."} -> {"ok": true}
 GET  /api/audio/devices -> {"sinks":[...], "sources":[...]} (name, description, volume, mute, default)
 POST /api/audio/volume {"kind":"sink"|"source","name":...,"volume":0-100} -> {"ok": true}
 POST /api/audio/default {"kind":"sink"|"source","name":...} -> {"ok": true} (moves live streams)
+GET  /api/clipboard -> {"kind":"image","hash":...} or {"kind":"none"} (images only; text flows via VNC)
+GET  /api/clipboard/image -> raw PNG bytes of the X clipboard image
+POST /api/clipboard/image (raw PNG body, max 5MB) -> {"ok": true} (puts it in the X clipboard)
 """
 
+import hashlib
 import json
 import os
 import re
@@ -19,6 +23,8 @@ from urllib.parse import parse_qs, urlparse
 
 HOME = os.environ.get("HOME", "/home/user")
 MAX_TEXT_BYTES = 512 * 1024
+MAX_IMAGE_BYTES = 5 * 1024 * 1024
+PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
 NAME_RE = re.compile(r"^[A-Za-z0-9_.@-]+$")
 
@@ -105,6 +111,59 @@ def safe_path(raw: str) -> str:
     return target
 
 
+def xclip(*args, data=None):
+    env = dict(os.environ)
+    env.setdefault("DISPLAY", ":1")
+    return subprocess.run(
+        ["xclip", "-selection", "clipboard", *args],
+        input=data, capture_output=True, timeout=10, env=env,
+    )
+
+
+def clip_status():
+    """Image-only clipboard probe. Text keeps flowing via VNC/RFB."""
+    r = xclip("-t", "TARGETS", "-o")
+    if r.returncode != 0:
+        return {"kind": "none"}
+    targets = r.stdout.decode(errors="replace")
+    if "image/png" not in targets.split():
+        return {"kind": "none"}
+    img = xclip("-t", "image/png", "-o")
+    if img.returncode != 0 or not img.stdout.startswith(PNG_MAGIC):
+        return {"kind": "none"}
+    return {"kind": "image", "hash": hashlib.sha1(img.stdout).hexdigest()}
+
+
+def clip_read_png():
+    img = xclip("-t", "image/png", "-o")
+    if img.returncode != 0 or not img.stdout.startswith(PNG_MAGIC):
+        raise ValueError("no png image in clipboard")
+    if len(img.stdout) > MAX_IMAGE_BYTES:
+        raise ValueError("image too large")
+    return img.stdout
+
+
+def clip_write_png(data):
+    if not data.startswith(PNG_MAGIC) or len(data) > MAX_IMAGE_BYTES:
+        raise ValueError("body must be a PNG up to 5MB")
+    # xclip -i forks to background to serve the selection while holding its
+    # fds open: capture_output would hang forever waiting on the daemon, so
+    # point its outputs at DEVNULL and only wait for the parent.
+    env = dict(os.environ)
+    env.setdefault("DISPLAY", ":1")
+    try:
+        p = subprocess.Popen(
+            ["xclip", "-selection", "clipboard", "-t", "image/png", "-i"],
+            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, env=env,
+        )
+        p.communicate(data, timeout=10)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise ValueError("xclip failed: " + str(e)[:120])
+    if p.returncode != 0:
+        raise ValueError("xclip failed")
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "yourdaas-file-api/0.1"
 
@@ -119,6 +178,14 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def send_raw(self, body, content_type, status=200):
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(body)
 
@@ -180,13 +247,36 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(audio_devices())
             except Exception as e:
                 return self.send_json({"error": str(e)}, 500)
+        if parsed.path == "/api/clipboard":
+            try:
+                return self.send_json(clip_status())
+            except Exception as e:
+                return self.send_json({"error": str(e)}, 500)
+        if parsed.path == "/api/clipboard/image":
+            try:
+                return self.send_raw(clip_read_png(), "image/png")
+            except ValueError as e:
+                return self.send_json({"error": str(e)}, 404)
+            except Exception as e:
+                return self.send_json({"error": str(e)}, 500)
         return self.send_json({"error": "unknown route"}, 404)
 
     def do_POST(self):
         parsed = urlparse(self.path)
         length = int(self.headers.get("Content-Length") or 0)
+        if length > MAX_IMAGE_BYTES + 1024:
+            return self.send_json({"error": "body too large"}, 413)
+        raw_body = self.rfile.read(length) if length else b""
+        if parsed.path == "/api/clipboard/image":
+            try:
+                clip_write_png(raw_body)
+            except ValueError as e:
+                return self.send_json({"error": str(e)}, 400)
+            except Exception as e:
+                return self.send_json({"error": str(e)}, 500)
+            return self.send_json({"ok": True})
         try:
-            payload = json.loads(self.rfile.read(length) or b"{}")
+            payload = json.loads(raw_body or b"{}")
         except json.JSONDecodeError:
             return self.send_json({"error": "invalid json"}, 400)
         if parsed.path == "/api/mkdir":

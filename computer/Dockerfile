@@ -4,6 +4,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xvfb \
     x11vnc \
     autocutsel \
+    xclip \
     xfce4-session \
     xfwm4 \
     xfce4-panel \
