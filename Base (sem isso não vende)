@@ -1,0 +1,19 @@
+Base (sem isso não vende)
+1. Multiusuário com isolamento real — 1 sessão por usuário (container/VM por conta, auth, expiração de sessão). Hoje é um container único.
+2. Suspender/retomar — congela a sessão ociosa e retoma em segundos. É o que viabiliza a conta (desktop parado custa CPU/RAM na nuvem).
+3. Persistência garantida + snapshots — backup, snapshot com 1 clique e "reset de fábrica" (o volume já persiste; falta a camada de proteção).
+4. HTTPS + auth + 2FA — hoje é 127.0.0.1 sem login; na nuvem isso é o dia zero.
+Experiência (faz parecer "meu PC")
+5. Áudio bidirecional — VNC não tem áudio; precisa PulseAudio → WebRTC/Opus. Sem som, metade dos usos morre.
+6. Upload/download e sync de arquivos — ponte entre máquina local e nuvem (o file-api atual é a semente).
+7. Clipboard rico — texto já funciona; imagem e arquivo são o próximo degrau.
+8. Webcam/mic e impressão — passthrough via WebRTC; impressão via PDF virtual.
+Diferencial (onde ganha do Windows 365)
+ 9. Acesso por link temporário / sessão compartilhada — "manda esse link e a pessoa vê seu PC" (suporte, pair, demonstração).
+10. Imagens prontas por perfil — "PC de dev", "PC de design", "PC de estudos": 1 clique e provisiona.
+11. Uso sob demanda com medição — cobrar por hora de GPU para quem precisa de máquina parruda esporadicamente.
+12. Cliente mobile decente — teclado virtual, gestos, zoom (o noVNC cru no celular é sofrível).
+Operação (o que pesa no bolso)
+13. Região/latência — usuário escolhe a região mais próxima; desktop remoto com 200ms é inutilizável.
+14. Limites e cotas — CPU/RAM/disco/banda por plano, com degradação elegante em vez de queda.
+15. Trilha de auditoria — quem acessou, quando, de onde (mais relevante no plano empresarial futuro).

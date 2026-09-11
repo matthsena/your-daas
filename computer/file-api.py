@@ -8,9 +8,10 @@ POST /api/mkdir {"path": "..."} -> {"ok": true}
 GET  /api/audio/devices -> {"sinks":[...], "sources":[...]} (name, description, volume, mute, default)
 POST /api/audio/volume {"kind":"sink"|"source","name":...,"volume":0-100} -> {"ok": true}
 POST /api/audio/default {"kind":"sink"|"source","name":...} -> {"ok": true} (moves live streams)
-GET  /api/clipboard -> {"kind":"image","hash":...} or {"kind":"none"} (images only; text flows via VNC)
+GET  /api/clipboard -> {"kind":"image","hash":...} | {"kind":"text","hash":...,"text":...} | {"kind":"none"}
 GET  /api/clipboard/image -> raw PNG bytes of the X clipboard image
 POST /api/clipboard/image (raw PNG body, max 5MB) -> {"ok": true} (puts it in the X clipboard)
+POST /api/clipboard/text {"text":...} (max 1MB) -> {"ok": true} (UTF-8 into the X clipboard)
 """
 
 import hashlib
@@ -23,6 +24,7 @@ from urllib.parse import parse_qs, urlparse
 
 HOME = os.environ.get("HOME", "/home/user")
 MAX_TEXT_BYTES = 512 * 1024
+MAX_CLIP_TEXT_BYTES = 1024 * 1024
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
@@ -111,27 +113,70 @@ def safe_path(raw: str) -> str:
     return target
 
 
-def xclip(*args, data=None):
+def xclip(*args, data=None, timeout=10):
     env = dict(os.environ)
     env.setdefault("DISPLAY", ":1")
     return subprocess.run(
         ["xclip", "-selection", "clipboard", *args],
-        input=data, capture_output=True, timeout=10, env=env,
+        input=data, capture_output=True, timeout=timeout, env=env,
     )
 
 
 def clip_status():
-    """Image-only clipboard probe. Text keeps flowing via VNC/RFB."""
-    r = xclip("-t", "TARGETS", "-o")
+    """Single clipboard probe. Prefers images; text decoded as UTF-8 only
+    (binary never surfaces as text)."""
+    try:
+        r = xclip("-t", "TARGETS", "-o", timeout=3)
+    except (OSError, subprocess.TimeoutExpired):
+        return {"kind": "none"}
     if r.returncode != 0:
         return {"kind": "none"}
     targets = r.stdout.decode(errors="replace")
-    if "image/png" not in targets.split():
-        return {"kind": "none"}
-    img = xclip("-t", "image/png", "-o")
-    if img.returncode != 0 or not img.stdout.startswith(PNG_MAGIC):
-        return {"kind": "none"}
-    return {"kind": "image", "hash": hashlib.sha1(img.stdout).hexdigest()}
+    if "image/png" in targets.split():
+        try:
+            img = xclip("-t", "image/png", "-o", timeout=3)
+        except (OSError, subprocess.TimeoutExpired):
+            return {"kind": "none"}
+        if img.returncode != 0 or not img.stdout.startswith(PNG_MAGIC):
+            return {"kind": "none"}
+        if len(img.stdout) > MAX_IMAGE_BYTES:
+            return {"kind": "none"}
+        return {"kind": "image", "hash": hashlib.sha1(img.stdout).hexdigest()}
+    for target in ("UTF8_STRING", "TEXT"):
+        try:
+            t = xclip("-t", target, "-o", timeout=3)
+        except (OSError, subprocess.TimeoutExpired):
+            return {"kind": "none"}
+        if t.returncode != 0:
+            continue
+        try:
+            text = t.stdout.decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+        if len(t.stdout) > MAX_CLIP_TEXT_BYTES:
+            return {"kind": "none"}
+        return {"kind": "text", "hash": hashlib.sha1(t.stdout).hexdigest(), "text": text}
+    return {"kind": "none"}
+
+
+def clip_write_text(text):
+    data = text.encode("utf-8")
+    if len(data) > MAX_CLIP_TEXT_BYTES:
+        raise ValueError("text too large (1MB max)")
+    # Same fork hazard as images: DEVNULL, wait for the parent only.
+    env = dict(os.environ)
+    env.setdefault("DISPLAY", ":1")
+    try:
+        p = subprocess.Popen(
+            ["xclip", "-selection", "clipboard", "-t", "UTF8_STRING", "-i"],
+            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, env=env,
+        )
+        p.communicate(data, timeout=10)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise ValueError("xclip failed: " + str(e)[:120])
+    if p.returncode != 0:
+        raise ValueError("xclip failed")
 
 
 def clip_read_png():
@@ -291,6 +336,17 @@ class Handler(BaseHTTPRequestHandler):
             except OSError as e:
                 return self.send_json({"error": str(e)}, 500)
             return self.send_json({"ok": True, "path": target})
+        if parsed.path == "/api/clipboard/text":
+            text = payload.get("text")
+            if not isinstance(text, str) or not text:
+                return self.send_json({"error": "text required"}, 400)
+            try:
+                clip_write_text(text)
+            except ValueError as e:
+                return self.send_json({"error": str(e)}, 400)
+            except Exception as e:
+                return self.send_json({"error": str(e)}, 500)
+            return self.send_json({"ok": True})
         if parsed.path == "/api/audio/volume":
             try:
                 audio_set_volume(

@@ -42,6 +42,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     adwaita-icon-theme \
     fonts-liberation \
     fonts-dejavu-core \
+    fonts-noto-color-emoji \
     dbus-x11 \
     xdg-utils \
     sudo \
@@ -70,6 +71,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 ENV DISPLAY=:1
 ENV HOME=/home/user
+# UTF-8 everywhere: X selection conversions (clipboard accents) depend on it.
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
 # PulseAudio runtime lives under the service tmp dir (no /run/user/<uid> for
 # an unprivileged user). As ENV (not just start.sh export) it also covers
 # `docker exec` sessions, so every process finds the daemon.

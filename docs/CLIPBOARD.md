@@ -2,15 +2,17 @@
 
 ## How it flows
 
-- **PC → Linux**: `Ctrl+V` keydown in the viewer (a real user gesture, so the
-  browser allows `readText()`) → `rfb.clipboardPasteFrom(text)` sets the
-  remote X clipboard → after a 250 ms grace period (x11vnc picks the
-  clipboard up asynchronously) the viewer sends a remote `Ctrl+V`.
-  The `paste` DOM event is kept as a fallback for menu/gesture pastes.
-- **Linux → PC**: copy inside Linux → x11vnc pushes `ServerCutText` →
-  noVNC `clipboard` event → the viewer tries `execCommand("copy")` first
-  (needs no gesture), then async `writeText()`. Only if both are blocked
-  does a transient panel appear with the text pre-selected (one `Ctrl+C`).
+- **PC → Linux (text)**: `Ctrl+V` keydown (the gesture) → `clipboard.read()`
+  for images, else `readText()` → `POST /api/clipboard/text` (exact UTF-8
+  into the X clipboard via xclip) → remote `Ctrl+V`. The `paste` DOM event
+  stays as fallback. noVNC's `clipboardPasteFrom` is deliberately NOT used:
+  it truncates to Latin-1 bytes, which drops accents.
+- **Linux → PC (text)**: copy inside Linux → x11vnc pushes `ServerCutText`
+  → the noVNC `clipboard` event acts only as a wake-up call (its payload is
+  Latin-1-decoded bytes: accents mojibake, images arrive as binary garbage)
+  → the viewer fetches the true state from `GET /api/clipboard` (exact
+  UTF-8 JSON) and writes it (`execCommand` first, async API, panel last).
+  The first poll only sets a baseline so page load never clobbers the PC.
 
 ## Browser limits you must know
 
@@ -22,6 +24,11 @@
 - Only text crosses. Images/files do not (roadmap).
 - The iframe **must** keep `allow="clipboard-read; clipboard-write"`.
 - Serve over a secure context (`127.0.0.1` counts; plain `http://lan-ip` does not).
+- The container must run a UTF-8 locale (`LANG=C.UTF-8`, set in image +
+  entrypoint): X selection conversions depend on it.
+- `Backspace` with focus on the viewer page (not a field) is swallowed to
+  stop the host browser navigating away; the keystroke still reaches noVNC,
+  so remote Backspace keeps working.
 
 ## App-specific notes
 
@@ -34,7 +41,7 @@
 ## Rich clipboard: images (files are still out of scope)
 
 VNC clipboard is text-only, so images travel on the file-api X bridge
-(`xclip`, PNG only, 5MB cap — text keeps flowing via RFB, untouched).
+(`xclip`, PNG only, 5MB cap).
 
 - **Linux → PC:** the viewer polls `GET /api/clipboard` every 2s (hash of
   the X image). New hash → fetch PNG → `ClipboardItem` write; if the

@@ -3,6 +3,8 @@
 set -uo pipefail
 export DISPLAY="${DISPLAY:-:1}"
 export HOME="${HOME:-/home/user}"
+export LANG="${LANG:-C.UTF-8}"
+export LC_ALL="${LC_ALL:-C.UTF-8}"
 USER_HOME="$HOME"
 mkdir -p "$USER_HOME" /tmp/yourdaas /tmp/.X11-unix
 cd "$USER_HOME"

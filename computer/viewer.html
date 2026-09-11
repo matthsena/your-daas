@@ -110,6 +110,20 @@
       document.getElementById("screen").addEventListener("contextmenu", (e) => {
         e.preventDefault();
       });
+      // Backspace with focus on the page itself navigates back in some
+      // browsers (session lost). Swallow it unless an editable element is
+      // focused. The event still reaches noVNC, so remote Backspace works.
+      window.addEventListener(
+        "keydown",
+        (event) => {
+          if (event.key !== "Backspace") return;
+          const t = event.target;
+          const editable =
+            t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
+          if (!editable) event.preventDefault();
+        },
+        true,
+      );
 
       // ---- Two-way clipboard (text + images), no buttons needed ----
       // Ctrl+C INSIDE Linux: x11vnc pushes the text via the RFB
@@ -132,6 +146,11 @@
         return "";
       })();
       let lastRemoteImg = "";
+      let lastSeenTextHash = "";
+      let lastSentTextHash = "";
+      let lastSentImgHash = "";
+      let remoteBaseline = false;
+      let polling = false;
 
       function rfbReady() {
         return rfb && !rfb.viewOnly && typeof rfb.clipboardPasteFrom === "function";
@@ -144,16 +163,35 @@
         rfb.sendKey(CTRL, "ControlLeft", false);
       }
       function pasteHostText(text) {
-        if (!rfbReady() || !text) return Promise.resolve(false);
-        rfb.clipboardPasteFrom(text);
-        // x11vnc picks up the remote clipboard asynchronously: without this
-        // pause the Ctrl+V below would land first and paste stale content (or nothing).
-        return new Promise((resolve) => {
-          setTimeout(() => {
-            sendRemotePaste();
-            resolve(true);
-          }, 250);
-        });
+        return postHostText(text);
+      }
+      // Host text -> Linux through the file-api X bridge (exact UTF-8).
+      // noVNC's clipboardPasteFrom truncates to Latin-1 bytes, which drops
+      // accents, so it is not used for text anymore.
+      async function sha1hex(data) {
+        try {
+          const buf = typeof data === "string" ? new TextEncoder().encode(data) : data;
+          const d = await crypto.subtle.digest("SHA-1", buf);
+          return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join("");
+        } catch {
+          return "";
+        }
+      }
+      async function postHostText(text) {
+        if (!rfbReady() || !text) return false;
+        try {
+          const res = await fetch(`${apiBase}/api/clipboard/text`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text }),
+          });
+          if (!res.ok) return false;
+        } catch {
+          return false;
+        }
+        lastSentTextHash = await sha1hex(text);
+        sendRemotePaste();
+        return true;
       }
       // Ctrl+V with the viewer focused: read the PC clipboard and inject into Linux.
       // preventDefault here keeps the `paste` handler below from double-pasting.
@@ -185,6 +223,7 @@
                   body: png,
                 });
                 if (!up.ok) continue;
+                lastSentImgHash = await sha1hex(await png.arrayBuffer());
                 show("image sent to Linux");
                 sendRemotePaste();
                 return;
@@ -195,10 +234,13 @@
           }
           try {
             const text = await navigator.clipboard?.readText();
-            if (await pasteHostText(text)) show("pasted into Linux");
+            if (await postHostText(text)) show("pasted into Linux");
             else show("nothing to paste");
           } catch {
-            show("allow clipboard access and try again");
+            void clipboardReadState().then((s) => {
+              if (s === "denied") showClipboardGuide();
+              else show("allow clipboard access and try again");
+            });
           }
         },
         true,
@@ -272,22 +314,12 @@
         clearTimeout(clipView.t);
         clipView.t = setTimeout(() => clipView.classList.remove("show"), 15000);
       }
-      rfb.addEventListener("clipboard", async (event) => {
-        lastRemote = event.detail?.text ?? "";
-        if (!lastRemote) {
-          clipView.classList.remove("show");
-          return;
-        }
-        if (legacyCopy(lastRemote)) {
-          show("copied to this PC");
-          return;
-        }
-        try {
-          await navigator.clipboard?.writeText(lastRemote);
-          show("copied to this PC");
-        } catch {
-          showPanelFallback();
-        }
+      // The RFB clipboard event is only a wake-up call: its payload is
+      // Latin-1-decoded bytes (accents mojibake, images arrive as binary
+      // garbage), so it is never written anywhere. The poll below fetches
+      // the true clipboard state (exact UTF-8 / PNG) instead.
+      rfb.addEventListener("clipboard", () => {
+        void pollRemoteNow();
       });
       // Images copied INSIDE Linux: poll the X bridge (VNC carries no
       // images). New hash -> fetch PNG -> write to the PC clipboard, else
@@ -342,36 +374,96 @@
         clearTimeout(clipView.t);
         clipView.t = setTimeout(() => clipView.classList.remove("show"), 15000);
       }
-      async function pollRemoteImage() {
-        if (rfb.viewOnly || document.hidden) return;
-        let st = null;
+      async function pollRemoteNow() {
+        if (rfb.viewOnly || polling) return;
+        polling = true;
         try {
-          const res = await fetch(`${apiBase}/api/clipboard`);
-          if (!res.ok) return;
-          st = await res.json();
-        } catch {
-          return;
-        }
-        if (!st || st.kind !== "image" || !st.hash || st.hash === lastRemoteImg) return;
-        lastRemoteImg = st.hash;
-        let blob = null;
-        try {
-          const res = await fetch(`${apiBase}/api/clipboard/image`);
-          if (res.ok) blob = await res.blob();
-        } catch {
-          blob = null;
-        }
-        if (!blob) return;
-        try {
-          await navigator.clipboard?.write([new ClipboardItem({ "image/png": blob })]);
-          show("image copied to this PC");
-        } catch {
-          showImagePanel(blob);
+          let st = null;
+          try {
+            const res = await fetch(`${apiBase}/api/clipboard`);
+            if (!res.ok) return;
+            st = await res.json();
+          } catch {
+            return;
+          }
+          if (!st || st.kind === "none" || !st.hash) return;
+          // First sighting only sets the baseline: never clobber the PC
+          // clipboard on page load.
+          if (!remoteBaseline) {
+            remoteBaseline = true;
+            if (st.kind === "image") lastRemoteImg = st.hash;
+            if (st.kind === "text") lastSeenTextHash = st.hash;
+            return;
+          }
+          if (st.kind === "image") {
+            if (st.hash === lastRemoteImg || st.hash === lastSentImgHash) return;
+            lastRemoteImg = st.hash;
+            let blob = null;
+            try {
+              const res = await fetch(`${apiBase}/api/clipboard/image`);
+              if (res.ok) blob = await res.blob();
+            } catch {
+              blob = null;
+            }
+            if (!blob) return;
+            try {
+              await navigator.clipboard?.write([new ClipboardItem({ "image/png": blob })]);
+              show("image copied to this PC");
+            } catch {
+              showImagePanel(blob);
+            }
+            return;
+          }
+          if (st.kind === "text" && typeof st.text === "string") {
+            if (st.hash === lastSeenTextHash || st.hash === lastSentTextHash) return;
+            lastSeenTextHash = st.hash;
+            lastRemote = st.text;
+            if (legacyCopy(st.text)) {
+              show("copied to this PC");
+              return;
+            }
+            try {
+              await navigator.clipboard?.writeText(st.text);
+              show("copied to this PC");
+            } catch {
+              showPanelFallback();
+            }
+          }
+        } finally {
+          polling = false;
         }
       }
       setInterval(() => {
-        void pollRemoteImage();
+        if (!document.hidden) void pollRemoteNow();
       }, 2000);
+      // Clipboard permission state: if the browser has it blocked, say so
+      // persistently (with the fix) instead of failing every Ctrl+V silently.
+      async function clipboardReadState() {
+        try {
+          const s = await navigator.permissions?.query({ name: "clipboard-read" });
+          return s?.state || "unknown";
+        } catch {
+          return "unknown";
+        }
+      }
+      function showClipboardGuide() {
+        clipView.innerHTML = "";
+        const p = document.createElement("div");
+        p.textContent =
+          "Clipboard is blocked: click the lock icon in the address bar, allow Clipboard, then reload the page.";
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = "dismiss";
+        btn.addEventListener("click", () => clipView.classList.remove("show"));
+        clipView.appendChild(p);
+        clipView.appendChild(btn);
+        clipView.classList.add("show");
+        clearTimeout(clipView.t);
+        clipView.t = setTimeout(() => clipView.classList.remove("show"), 20000);
+      }
+      void clipboardReadState().then((s) => {
+        if (s === "denied") showClipboardGuide();
+      });
     </script>
   </head>
   <body>
