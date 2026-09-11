@@ -435,7 +435,20 @@
       }
       setInterval(() => {
         if (!document.hidden) void pollRemoteNow();
-      }, 2000);
+      }, 1000);
+      // Poll on return-to-page too: the interval may have missed a copy
+      // made right before pasting (stale clipboard wins otherwise).
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden) void pollRemoteNow();
+      });
+      window.addEventListener("focus", () => {
+        void pollRemoteNow();
+      });
+      window.addEventListener("pageshow", () => {
+        void pollRemoteNow();
+      });
+      // Baseline immediately so the first interval tick can already act.
+      void pollRemoteNow();
       // Clipboard permission state: if the browser has it blocked, say so
       // persistently (with the fix) instead of failing every Ctrl+V silently.
       async function clipboardReadState() {
