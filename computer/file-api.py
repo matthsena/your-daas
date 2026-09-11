@@ -19,7 +19,7 @@ import json
 import os
 import re
 import subprocess
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 HOME = os.environ.get("HOME", "/home/user")
@@ -374,6 +374,8 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    server = HTTPServer(("0.0.0.0", 7071), Handler)
+    # Threaded: clipboard polls must never stall the files API (or each
+    # other) behind a slow X selection owner.
+    server = ThreadingHTTPServer(("0.0.0.0", 7071), Handler)
     print("file-api on :7071", flush=True)
     server.serve_forever()

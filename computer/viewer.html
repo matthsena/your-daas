@@ -377,10 +377,12 @@
       async function pollRemoteNow() {
         if (rfb.viewOnly || polling) return;
         polling = true;
+        const timeout =
+          typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(8000) : undefined;
         try {
           let st = null;
           try {
-            const res = await fetch(`${apiBase}/api/clipboard`);
+            const res = await fetch(`${apiBase}/api/clipboard`, { signal: timeout });
             if (!res.ok) return;
             st = await res.json();
           } catch {
