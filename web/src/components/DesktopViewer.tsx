@@ -5,6 +5,8 @@ interface Props {
   viewOnly: boolean;
   nonce: number;
   wrapRef: RefObject<HTMLDivElement | null>;
+  base?: string;
+  token?: string;
 }
 
 interface DroppedFile {
@@ -56,7 +58,7 @@ async function collectFiles(dt: DataTransfer): Promise<DroppedFile[]> {
 
 const cleanSegment = (s: string): string => s.replace(/\//g, "").trim();
 
-export function DesktopViewer({ viewOnly, nonce, wrapRef }: Props) {
+export function DesktopViewer({ viewOnly, nonce, wrapRef, base = "", token }: Props) {
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const dragDepth = useRef(0);
   const [dragging, setDragging] = useState(false);
@@ -138,7 +140,7 @@ export function DesktopViewer({ viewOnly, nonce, wrapRef }: Props) {
         key={`${viewOnly}-${nonce}`}
         ref={frameRef}
         title="computer"
-        src={desktopUrl(viewOnly)}
+        src={desktopUrl(viewOnly, base, token)}
         allow="clipboard-read; clipboard-write"
         allowFullScreen
         onLoad={forwardGestures}
