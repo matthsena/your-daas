@@ -31,7 +31,7 @@ autocutsel ×2 bridges X CLIPBOARD ↔ CUTBUFFER ↔ PRIMARY
 | `computer/Dockerfile` | Debian + XFCE + Brave + VNC stack (1.35GB image), `user` (uid 1000), canonical `.desktop` launchers |
 | `computer/start.sh` | boot order, plank pins via dconf, Brave Singleton lock cleanup |
 | `computer/viewer.html` | chromeless noVNC page (`yourdaas.html` in the image): keyboard focus, right-click passthrough, clipboard bridge |
-| `computer/file-api.py` | `GET /api/health, /api/files, /api/file`, `POST /api/mkdir`; path-jailed, no auth (loopback only) |
+| `computer/file-api.py` | `GET /api/health, /api/files, /api/file`, `POST /api/mkdir`, `POST /api/upload?path=` (raw bytes, jailed, 1GB cap), audio + clipboard bridges; path-jailed, no auth (loopback only) |
 | `computer/audio-ws.py` | duplex audio: `/out` Opus/WebM speaker stream, `/mic` PCM16 mic injection; no auth (loopback only) |
 | `computer/desktop-files/` | canonical launchers with `StartupWMClass` (grouping depends on these) |
 | `computer/xfce/` | panel / wm / icon-theme defaults (first boot seeds; later the home volume wins) |

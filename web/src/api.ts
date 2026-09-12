@@ -39,6 +39,37 @@ export function desktopUrl(viewOnly: boolean): string {
   return `/novnc/yourdaas.html?view_only=${viewOnly ? "true" : "false"}`;
 }
 
+export const REMOTE_HOME = "/home/user";
+export const REMOTE_DESKTOP = `${REMOTE_HOME}/Desktop`;
+
+export function uploadFile(
+  destPath: string,
+  file: Blob,
+  onProgress?: (loaded: number, total: number) => void,
+): Promise<void> {
+  // XHR (not fetch): only XHR reports upload progress.
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${base}/api/upload?path=${encodeURIComponent(destPath)}`);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress?.(e.loaded, e.total);
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) resolve();
+      else {
+        try {
+          const body = JSON.parse(xhr.responseText);
+          reject(new Error(body.error ?? `HTTP ${xhr.status}`));
+        } catch {
+          reject(new Error(`HTTP ${xhr.status}`));
+        }
+      }
+    };
+    xhr.onerror = () => reject(new Error("upload failed"));
+    xhr.send(file);
+  });
+}
+
 export function audioUrl(path: "out" | "mic"): string {
   // Duplex audio bridge (see docs/AUDIO.md). Same-origin WS via the proxy.
   const proto = window.location.protocol === "https:" ? "wss" : "ws";

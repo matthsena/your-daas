@@ -73,9 +73,40 @@ select {
   border-radius: 8px;
   overflow: hidden;
   background: #000;
+  position: relative;
 }
 .screen-wrap iframe { width: 100%; height: 100%; border: 0; display: block; }
 .screen-wrap:fullscreen { border: 0; border-radius: 0; }
+
+/* Drag-and-drop upload overlay (also visible in fullscreen). */
+.drop-overlay {
+  position: absolute;
+  inset: 0.5rem;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  background: rgba(10, 10, 12, 0.88);
+  border: 2px dashed var(--accent);
+  border-radius: 12px;
+  padding: 16px;
+  pointer-events: none;
+}
+.drop-overlay button { pointer-events: auto; }
+.drop-overlay span { color: var(--muted); font-size: 13px; }
+.drop-errors {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-width: 90%;
+  max-height: 30vh;
+  overflow: auto;
+  color: #fca5a5;
+  font-size: 13px;
+}
 
 /* Files slide-over. */
 .drawer {
