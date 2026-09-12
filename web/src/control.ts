@@ -30,7 +30,9 @@ export async function fetchMe(): Promise<Me> {
 
 export async function controlAlive(): Promise<boolean> {
   try {
-    const res = await fetch("/c/api/health");
+    const signal =
+      typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(5000) : undefined;
+    const res = await fetch("/c/api/health", { signal });
     return res.ok;
   } catch {
     return false;

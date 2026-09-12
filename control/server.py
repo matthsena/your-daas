@@ -376,8 +376,12 @@ def proxy_target(sub):
     parts = sub.lstrip("/").split("/", 1)
     head = parts[0]
     rest = parts[1] if len(parts) > 1 else ""
-    if head in ("novnc", "websockify"):
-        return 6080, f"/{head}/{rest}" if rest or head == "novnc" else f"/{head}"
+    if head == "novnc":
+        # websockify serves the noVNC files at its root: strip the prefix
+        # (same as the legacy nginx location).
+        return 6080, f"/{rest}" if rest else "/"
+    if head == "websockify":
+        return 6080, "/websockify"
     if head == "api":
         return 7071, f"/api/{rest}" if rest else "/api/"
     if head == "audio":

@@ -20,6 +20,24 @@ jobs:
           bash -n computer/start.sh
           bash -n deploy/r2-backup.sh
           python3 -m py_compile computer/file-api.py
+          python3 -m py_compile control/server.py control/db.py control/totp.py control/docker.py
+
+      - name: Control-plane unit tests (VNC view filter)
+        run: |
+          python3 - <<'EOF'
+          import sys
+          sys.path.insert(0, "control")
+          from server import vnc_frame_dropped as f
+          cases = [
+              ("view", 0x2, 4, True), ("view", 0x2, 5, True), ("view", 0x2, 6, True),
+              ("view", 0x2, 3, False), ("view", 0x2, 0, False), ("view", 0x1, 4, False),
+              ("full", 0x2, 4, False), ("control", 0x2, 6, False),
+          ]
+          for mode, op, fb, exp in cases:
+              got = f(mode, op, bytes([fb]))
+              assert got == exp, (mode, op, fb, got, exp)
+          print("vnc filter: all pass")
+          EOF
 
       - name: Build computer image
         run: docker build -t yourdaas/computer:ci ./computer
@@ -32,6 +50,9 @@ jobs:
 
       - name: Build web image
         run: docker build -t yourdaas/web:ci ./web
+
+      - name: Build control image
+        run: docker build -t yourdaas/control:ci ./control
 
       - name: No secrets in tree
         # ci.yml and r2-backup.sh name the patterns/env-vars themselves;

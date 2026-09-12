@@ -5,13 +5,21 @@ One `computer` container is a whole PC. The `web` container is a thin client.
 ```text
 browser ──HTTPS──► web (nginx)
    │                 ├─ /            → static React app
-   │                 ├─ /novnc/*     → proxy → computer:6080 (noVNC page + assets)
-   │                 ├─ /websockify  → proxy (WS) → computer:6080/websockify
-   │                 ├─ /api/*       → proxy → computer:7071 (file API)
-   │                 └─ /audio/*     → proxy (WS) → computer:7072 (duplex audio)
+   │                 ├─ /novnc/* ──┐ (legacy single-user computer)
+   │                 ├─ /websockify ┤
+   │                 ├─ /api/* ─────┤
+   │                 ├─ /audio/* ───┘
+   │                 ├─ /c/* ──────► control:8080 (auth API)
+   │                 └─ /u/<user>/* ► control:8080 (authed proxy per user)
+   │                                   ├─ novnc/websockify → computer:6080
+   │                                   ├─ api/ → computer:7071
+   │                                   └─ audio/ → computer:7072
    │
    └─ iframe allow="clipboard-read; clipboard-write" (clipboard needs it)
 ```
+
+Without the control plane running, the app falls back to legacy
+single-user mode (direct `/novnc`, `/api`, `/audio` routes).
 
 Inside `computer` (`computer/start.sh` is PID 1's script):
 
@@ -36,6 +44,19 @@ autocutsel ×2 bridges X CLIPBOARD ↔ CUTBUFFER ↔ PRIMARY
 | `computer/desktop-files/` | canonical launchers with `StartupWMClass` (grouping depends on these) |
 | `computer/xfce/` | panel / wm / icon-theme defaults (first boot seeds; later the home volume wins) |
 | `web/src` | `DesktopViewer` (iframe), `FileManager` (file API), `api.ts` (routes) |
+| `control/` | auth (password+TOTP), per-user desktops via Docker socket, suspend/resume + idle sweeper, snapshots, share links, audit; HTTP+WS proxy with session/share auth (stdlib + python3-websockets) |
+
+## Control plane model
+
+- One computer container per user (`yourdaas-u-<name>`, volume `...-home`),
+  spawned at registration, no published ports (reachable only via control).
+- Sessions: password → 5-min ticket → TOTP → 24h HttpOnly cookie.
+- Idle: web beacons genuine input (60s throttle); sweeper `pause`s past
+  `IDLE_MINUTES` (default 30). Suspended desktops fail closed (409) until resume.
+- Snapshots: pause → tar volume → unpause; restore stops/wipes/extracts/starts.
+- Shares (`#/s/<token>`, view|control, TTL): view mode is **protocol-enforced**
+  — the WS relay drops VNC Key/Pointer/CutText frames, `/mic` upgrades and
+  non-GET writes are refused. Control shares are full interaction.
 
 ## Data & persistence
 
