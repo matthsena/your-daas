@@ -79,12 +79,33 @@ class Docker:
 
     def wait(self, ref, timeout=300):
         c = _UDS(self.sock_path)
+        c.connect()
         c.sock.settimeout(timeout + 10)
         c.request("POST", f"/containers/{ref}/wait")
         res = c.getresponse()
         payload = res.read()
         c.close()
         return json.loads(payload) if payload else {}
+
+    def logs(self, ref, tail=20):
+        """Demuxed stdout+stderr tail (Docker multiplexes non-tty streams)."""
+        raw = self._req_bytes("GET", f"/containers/{ref}/logs?stdout=1&stderr=1&tail={tail}")
+        out, i = [], 0
+        while i + 8 <= len(raw):
+            ln = int.from_bytes(raw[i + 4 : i + 8], "big")
+            out.append(raw[i + 8 : i + 8 + ln])
+            i += 8 + ln
+            if len(out) > 200:
+                break
+        return b"".join(out).decode(errors="replace")
+
+    def _req_bytes(self, method, path):
+        c = _UDS(self.sock_path)
+        c.request(method, path)
+        res = c.getresponse()
+        payload = res.read()
+        c.close()
+        return payload
 
     # ---- volumes ----
     def create_volume(self, name):

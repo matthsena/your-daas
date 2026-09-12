@@ -54,6 +54,11 @@ UPSTREAM = {"novnc": 6080, "websockify": 6080, "api": 7071, "audio": 7072}
 # VNC client->server message types dropped for view-only shares.
 VNC_INPUT_TYPES = {4, 5, 6}  # KeyEvent, PointerEvent, ClientCutText
 
+
+def vnc_frame_dropped(mode: str, opcode: int, payload: bytes) -> bool:
+    """True if a client->server WS frame must not reach upstream."""
+    return mode == "view" and opcode == 0x2 and bool(payload) and payload[0] in VNC_INPUT_TYPES
+
 log = print
 
 
@@ -166,6 +171,17 @@ def sync_container_state(user):
     return state
 
 
+def _create_computer_container(user, cname, vname):
+    dock.create_container(
+        cname, CFG["computer_image"],
+        binds=[f"{vname}:/home/user", "/etc/localtime:/etc/localtime:ro"],
+        network=CFG["net"],
+        labels={"yourdaas.owner": user["username"], "yourdaas.managed": "1"},
+    )
+    db.run("UPDATE users SET container=?, volume=?, state='created' WHERE id=?",
+           (cname, vname, user["id"]))
+
+
 def ensure_desktop(user):
     """Idempotent: volume + container exist and are started. Returns state."""
     cname = container_name(user["username"])
@@ -173,14 +189,7 @@ def ensure_desktop(user):
     dock.create_volume(vname)
     info = dock.inspect_container(cname)
     if info is None:
-        dock.create_container(
-            cname, CFG["computer_image"],
-            binds=[f"{vname}:/home/user", "/etc/localtime:/etc/localtime:ro"],
-            network=CFG["net"],
-            labels={"yourdaas.owner": user["username"], "yourdaas.managed": "1"},
-        )
-        db.run("UPDATE users SET container=?, volume=?, state='created' WHERE id=?",
-               (cname, vname, user["id"]))
+        _create_computer_container(user, cname, vname)
         info = dock.inspect_container(cname)
     state = Docker.state_of(info)
     if state in ("created", "exited", "unknown", "missing"):
@@ -201,6 +210,7 @@ def helper_run_volumes(data_volume, cmd):
         "Image": CFG["helper_image"],
         "Cmd": ["sh", "-c", cmd],
         "Labels": {"yourdaas.helper": "1"},
+        "User": "0:0",
         "HostConfig": {
             "Binds": [f"{data_volume}:/data", f"{CFG['snap_volume']}:/backup"],
             "NetworkMode": "none",
@@ -210,9 +220,7 @@ def helper_run_volumes(data_volume, cmd):
     try:
         dock._req("POST", f"/containers/{cid}/start")
         res = dock.wait(cid, timeout=600)
-        logs = dock._req("GET", f"/containers/{cid}/logs?stdout=1&stderr=1&tail=5")
-        if isinstance(logs, bytes):
-            logs = logs.decode(errors="replace")
+        logs = dock.logs(cid)
     finally:
         try:
             dock.remove_container(cid, force=True)
@@ -563,7 +571,7 @@ def proxy_ws(handler, username, mode, port, upath):
                         break
                     continue
                 # binary data frame
-                if mode == "view" and payload and payload[0] in VNC_INPUT_TYPES:
+                if vnc_frame_dropped(mode, opcode, payload):
                     continue  # enforce view-only: drop input
                 try:
                     up.sendall(raw)
@@ -761,8 +769,17 @@ def api_reset(handler):
             dock.stop(cname)
         except Exception:
             pass
-        dock.remove_volume(vname)
+        # A stopped container still holds its volume: recreate both.
+        try:
+            dock.remove_container(cname, force=True)
+        except Exception:
+            pass
+        try:
+            dock.remove_volume(vname)
+        except Exception as e:
+            return send_json(handler, {"error": str(e)[:200]}, 502)
         dock.create_volume(vname)
+        _create_computer_container(user, cname, vname)
         dock.start(cname)
         db.run("UPDATE users SET state='running', last_beat=? WHERE id=?", (db.now(), user["id"]))
     except Exception as e:
@@ -776,7 +793,7 @@ def api_shares_list(handler):
     if not user:
         return None
     rows = db.q("SELECT token,mode,note,created_at,expires_at,revoked FROM shares"
-                " WHERE owner_id=? ORDER BY id DESC", (user["id"],))
+                " WHERE owner_id=? ORDER BY created_at DESC", (user["id"],))
     return send_json(handler, {"shares": rows})
 
 
