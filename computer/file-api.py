@@ -5,6 +5,7 @@ GET  /api/health -> {"ok": true}
 GET  /api/files?path=/home/user -> {"path":..., "entries":[{"name","path","kind":"file"|"dir","size"}]}
 GET  /api/file?path=... -> {"path":..., "content": "..."} (text up to 512KB)
 POST /api/mkdir {"path": "..."} -> {"ok": true}
+POST /api/upload?path=/home/user/Desktop/a/b.png (raw bytes, max 1GB) -> {"ok": true}
 GET  /api/audio/devices -> {"sinks":[...], "sources":[...]} (name, description, volume, mute, default)
 POST /api/audio/volume {"kind":"sink"|"source","name":...,"volume":0-100} -> {"ok": true}
 POST /api/audio/default {"kind":"sink"|"source","name":...} -> {"ok": true} (moves live streams)
@@ -24,6 +25,7 @@ from urllib.parse import parse_qs, urlparse
 
 HOME = os.environ.get("HOME", "/home/user")
 MAX_TEXT_BYTES = 512 * 1024
+MAX_UPLOAD_BYTES = 1024 * 1024 * 1024
 MAX_CLIP_TEXT_BYTES = 1024 * 1024
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
@@ -306,9 +308,41 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"error": str(e)}, 500)
         return self.send_json({"error": "unknown route"}, 404)
 
+    def handle_upload(self, parsed, length):
+        # Streams straight from the socket (never buffers the whole file).
+        qs = parse_qs(parsed.query)
+        dest = (qs.get("path") or [""])[0]
+        if not dest:
+            return self.send_json({"error": "path required"}, 400)
+        if length <= 0:
+            return self.send_json({"error": "empty body"}, 400)
+        if length > MAX_UPLOAD_BYTES:
+            return self.send_json({"error": "file too large (1GB max)"}, 413)
+        parts = [p for p in dest.split("/") if p not in ("", ".", "..")]
+        if not parts:
+            return self.send_json({"error": "invalid path"}, 400)
+        try:
+            target = safe_path("/" + "/".join(parts))
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            with open(target, "wb") as f:
+                remaining = length
+                while remaining > 0:
+                    chunk = self.rfile.read(min(65536, remaining))
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    remaining -= len(chunk)
+        except ValueError:
+            return self.send_json({"error": "invalid path"}, 400)
+        except OSError as e:
+            return self.send_json({"error": str(e)}, 500)
+        return self.send_json({"ok": True, "path": target})
+
     def do_POST(self):
         parsed = urlparse(self.path)
         length = int(self.headers.get("Content-Length") or 0)
+        if parsed.path == "/api/upload":
+            return self.handle_upload(parsed, length)
         if length > MAX_IMAGE_BYTES + 1024:
             return self.send_json({"error": "body too large"}, 413)
         raw_body = self.rfile.read(length) if length else b""
