@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   createShare,
   createSnapshot,
+  ensureDesktop,
   fmtSize,
   fmtTime,
   listAudit,
@@ -118,6 +119,14 @@ export function Console({ me, onChanged, onResumed }: {
               Factory reset
             </button>
           )}
+          <button
+            type="button"
+            disabled={busy}
+            title="Recreate a missing container or volume"
+            onClick={() => void run(ensureDesktop, "Desktop ensured")}
+          >
+            Repair
+          </button>
         </div>
       </section>
 

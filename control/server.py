@@ -22,6 +22,7 @@ import os
 import re
 import secrets
 import socket
+import tempfile
 import threading
 import time
 import urllib.parse
@@ -53,6 +54,20 @@ UPSTREAM = {"novnc": 6080, "websockify": 6080, "api": 7071, "audio": 7072}
 
 # VNC client->server message types dropped for view-only shares.
 VNC_INPUT_TYPES = {4, 5, 6}  # KeyEvent, PointerEvent, ClientCutText
+
+
+# View shares see pixels and hear audio — nothing else. Guests must not
+# read files, clipboard, or device lists through the proxy (all reachable
+# via GET on the file API), so view mode is an explicit allowlist.
+def view_allowed(sub: str, is_ws: bool, command: str) -> bool:
+    if is_ws:
+        return sub.startswith("/websockify") or re.match(r"^/audio/out", sub) is not None
+    if command not in ("GET", "HEAD", "OPTIONS"):
+        return False
+    return (
+        sub == "/novnc" or sub.startswith("/novnc/")
+        or sub == "/api/health" or sub.startswith("/api/health?")
+    )
 
 
 def vnc_frame_dropped(mode: str, opcode: int, payload: bytes) -> bool:
@@ -171,12 +186,38 @@ def sync_container_state(user):
     return state
 
 
+def _parse_bytes(s: str) -> int:
+    s = s.strip().lower()
+    mul = {"k": 1024, "m": 1024**2, "g": 1024**3}
+    if s and s[-1] in mul:
+        return int(float(s[:-1]) * mul[s[-1]])
+    return int(s)
+
+
 def _create_computer_container(user, cname, vname):
+    env = []
+    if os.environ.get("TZ"):
+        env.append(f"TZ={os.environ['TZ']}")
+    host_extra = {}
+    # Optional per-user caps (quotas phase 1): e.g. USER_MEM_LIMIT=4g,
+    # USER_NANO_CPUS=2000000000 (=2 CPUs). Unset = host default (uncapped).
+    if os.environ.get("USER_MEM_LIMIT"):
+        try:
+            host_extra["Memory"] = _parse_bytes(os.environ["USER_MEM_LIMIT"])
+        except ValueError:
+            pass
+    if os.environ.get("USER_NANO_CPUS"):
+        try:
+            host_extra["NanoCpus"] = int(os.environ["USER_NANO_CPUS"])
+        except ValueError:
+            pass
     dock.create_container(
         cname, CFG["computer_image"],
         binds=[f"{vname}:/home/user", "/etc/localtime:/etc/localtime:ro"],
         network=CFG["net"],
         labels={"yourdaas.owner": user["username"], "yourdaas.managed": "1"},
+        env=env,
+        host_extra=host_extra or None,
     )
     db.run("UPDATE users SET container=?, volume=?, state='created' WHERE id=?",
            (cname, vname, user["id"]))
@@ -389,6 +430,39 @@ def proxy_target(sub):
     return None, None
 
 
+SPOOL_THRESHOLD = 64 * 1024 * 1024
+
+
+def read_body_spooled(handler, length):
+    """Read a request body, spooling large ones to disk so a 1GB upload
+    never balloons proxy RAM. Returns (bytes_or_None, tmp_path_or_None)."""
+    if length <= 0:
+        return None, None
+    if length <= SPOOL_THRESHOLD:
+        return handler.rfile.read(length), None
+    tmp = tempfile.NamedTemporaryFile(prefix="yd-up-", dir="/tmp", delete=False)
+    try:
+        remaining = length
+        while remaining > 0:
+            chunk = handler.rfile.read(min(1048576, remaining))
+            if not chunk:
+                break
+            tmp.write(chunk)
+            remaining -= len(chunk)
+        tmp.close()
+        return None, tmp.name
+    except Exception:
+        try:
+            tmp.close()
+        except Exception:
+            pass
+        try:
+            os.remove(tmp.name)
+        except Exception:
+            pass
+        raise
+
+
 def proxy_http(handler, username, mode, port, upath):
     if mode == "view":
         if handler.command not in ("GET", "HEAD", "OPTIONS"):
@@ -396,8 +470,16 @@ def proxy_http(handler, username, mode, port, upath):
     length = int(handler.headers.get("Content-Length") or 0)
     if length > 1024 * 1024 * 1024 + 65536:
         return send_json(handler, {"error": "body too large"}, 413)
-    body = handler.rfile.read(length) if length else None
+    try:
+        body, spooled = read_body_spooled(handler, length)
+    except Exception:
+        return send_json(handler, {"error": "failed reading request"}, 400)
     if handler.command == "OPTIONS" and mode == "view":
+        if spooled:
+            try:
+                os.remove(spooled)
+            except Exception:
+                pass
         return send_json(handler, {"ok": True})
     cname = container_name(username)
     conn = http.client.HTTPConnection(cname, port, timeout=15)
@@ -409,7 +491,26 @@ def proxy_http(handler, username, mode, port, upath):
             fwd[k] = v
         fwd["Host"] = f"{cname}:{port}"
         fwd["X-Forwarded-For"] = client_ip(handler)
-        conn.request(handler.command, upath, body=body, headers=fwd)
+        if spooled:
+            fwd["Content-Length"] = str(length)
+            conn.putrequest(handler.command, upath, skip_accept_encoding=True)
+            for k, v in fwd.items():
+                conn.putheader(k, v)
+            conn.endheaders()
+            try:
+                with open(spooled, "rb") as f:
+                    while True:
+                        chunk = f.read(1048576)
+                        if not chunk:
+                            break
+                        conn.send(chunk)
+            finally:
+                try:
+                    os.remove(spooled)
+                except Exception:
+                    pass
+        else:
+            conn.request(handler.command, upath, body=body, headers=fwd)
         res = conn.getresponse()
         data = res.read(1024 * 1024 * 1024 + 65536)
     except Exception as e:
@@ -682,7 +783,12 @@ def api_ensure(handler):
 
 
 def snap_name():
-    return "snap-" + time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+    # Unique per call: two snapshots within the same second must not share
+    # a tarball (the second would silently overwrite the first).
+    return "snap-" + time.strftime("%Y%m%d-%H%M%S", time.gmtime()) + "-" + secrets.token_hex(3)
+
+
+MAX_SNAPSHOTS_PER_USER = 10
 
 
 def api_snapshots_list(handler):
@@ -726,6 +832,17 @@ def api_snapshot_create(handler):
                 pass
     sid = db.run("INSERT INTO snapshots(owner_id,name,size,created_at,note) VALUES (?,?,?,?,?)",
                  (user["id"], name, size, db.now(), note))
+    # Cap stored snapshots per user: disk-fill via snapshot spam.
+    # Delete tarballs too (rows alone wouldn't free disk).
+    old = db.q("SELECT id, name FROM snapshots WHERE owner_id=? ORDER BY id DESC LIMIT -1 OFFSET ?",
+               (user["id"], MAX_SNAPSHOTS_PER_USER))
+    for row in old:
+        if re.match(r"^snap-[0-9]{8}-[0-9]{6}-[0-9a-f]+$", row["name"] or ""):
+            try:
+                os.remove(os.path.join(CFG["snap_dir"], str(user["id"]), row["name"] + ".tgz"))
+            except OSError:
+                pass
+        db.run("DELETE FROM snapshots WHERE id=?", (row["id"],))
     audit(user["id"], user["username"], "snapshot.create", name, handler)
     return send_json(handler, {"id": sid, "name": name, "size": size}, 201)
 
@@ -948,19 +1065,16 @@ class Handler(BaseHTTPRequestHandler):
         if q:
             upath += ("&" if "?" in upath else "?") + q
         is_ws = self.headers.get("Upgrade", "").lower() == "websocket"
-        if mode == "view":
-            if is_ws:
-                # Only the desktop stream and speaker audio may pass; mic
-                # upload would be guest input. VNC input is dropped in-relay.
-                if not (sub.startswith("/websockify") or re.match(r"^/audio/out", sub)):
-                    return send_json(self, {"error": "view-only share"}, 403)
-            elif self.command not in ("GET", "HEAD", "OPTIONS"):
-                return send_json(self, {"error": "view-only share"}, 403)
+        if mode == "view" and not view_allowed(sub, is_ws, self.command):
+            return send_json(self, {"error": "view-only share"}, 403)
         # Suspended desktops fail closed with an actionable error.
         owner = db.q("SELECT * FROM users WHERE username=?", (username,), one=True)
         if owner and sync_container_state(owner) == "paused":
             return send_json(self, {"error": "desktop suspended", "action": "resume"}, 409)
-        touch_beat(username)
+        # Only owner/admin traffic counts as activity: a guest holding a view
+        # link open must not keep the owner's container awake (and billable).
+        if mode == "full":
+            touch_beat(username)
         if is_ws:
             # VNC input filtering applies to websockify only; audio PCM
             # frames may start with the same bytes — never filter those.
@@ -1005,8 +1119,10 @@ def sweeper():
                     log(f"sweeper: suspended {u['username']} (idle)")
                 except Exception as e:
                     log(f"sweeper: suspend {u['username']} failed: {e}")
-            # prune expired tickets/sessions
+            # prune expired tickets/sessions, cap audit table
             db.run("DELETE FROM sessions WHERE expires_at < ?", (db.now(),))
+            db.run("DELETE FROM audit WHERE id NOT IN "
+                   "(SELECT id FROM audit ORDER BY id DESC LIMIT 20000)")
         except Exception as e:
             log(f"sweeper error: {e}")
 

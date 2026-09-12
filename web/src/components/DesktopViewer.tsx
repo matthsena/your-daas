@@ -7,6 +7,8 @@ interface Props {
   wrapRef: RefObject<HTMLDivElement | null>;
   base?: string;
   token?: string;
+  // Share views must not upload: api() targets the legacy computer there.
+  uploads?: boolean;
 }
 
 interface DroppedFile {
@@ -58,7 +60,7 @@ async function collectFiles(dt: DataTransfer): Promise<DroppedFile[]> {
 
 const cleanSegment = (s: string): string => s.replace(/\//g, "").trim();
 
-export function DesktopViewer({ viewOnly, nonce, wrapRef, base = "", token }: Props) {
+export function DesktopViewer({ viewOnly, nonce, wrapRef, base = "", token, uploads = true }: Props) {
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const dragDepth = useRef(0);
   const [dragging, setDragging] = useState(false);
@@ -76,7 +78,7 @@ export function DesktopViewer({ viewOnly, nonce, wrapRef, base = "", token }: Pr
   };
 
   const onDragEnter = (e: DragEvent) => {
-    if (viewOnly || ![...e.dataTransfer.types].includes("Files")) return;
+    if (viewOnly || !uploads || ![...e.dataTransfer.types].includes("Files")) return;
     e.preventDefault();
     dragDepth.current += 1;
     setDragging(true);
@@ -93,7 +95,7 @@ export function DesktopViewer({ viewOnly, nonce, wrapRef, base = "", token }: Pr
     e.preventDefault();
     dragDepth.current = 0;
     setDragging(false);
-    if (viewOnly) return;
+    if (viewOnly || !uploads) return;
     const files = (await collectFiles(e.dataTransfer)).filter(
       (f) => f.file.size > 0 && cleanSegment(f.path.split("/").pop() ?? ""),
     );

@@ -54,6 +54,7 @@ export function ShareView({ token }: { token: string }) {
           wrapRef={wrapRef}
           base={info.base}
           token={token}
+          uploads={false}
         />
       </main>
     </div>

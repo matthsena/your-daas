@@ -75,6 +75,10 @@ export async function resumeDesktop(): Promise<{ state: string }> {
   return ctlJson(await post("/c/api/session/resume"));
 }
 
+export async function ensureDesktop(): Promise<{ state: string }> {
+  return ctlJson(await post("/c/api/session/ensure"));
+}
+
 export async function resetDesktop(): Promise<void> {
   await ctlJson(await post("/c/api/reset"));
 }

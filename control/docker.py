@@ -50,12 +50,15 @@ class Docker:
                 return None
             raise
 
-    def create_container(self, name, image, binds, network, labels, env=None):
+    def create_container(self, name, image, binds, network, labels, env=None, host_extra=None):
+        host_config = {"Binds": binds, "RestartPolicy": {"Name": "unless-stopped"}}
+        if host_extra:
+            host_config.update(host_extra)
         body = {
             "Image": image,
             "Env": env or [],
             "Labels": labels or {},
-            "HostConfig": {"Binds": binds, "RestartPolicy": {"Name": "unless-stopped"}},
+            "HostConfig": host_config,
             "NetworkingConfig": {"EndpointsConfig": {network: {}}},
         }
         out = self._req("POST", f"/containers/create?name={urllib.parse.quote(name, safe='')}", body)

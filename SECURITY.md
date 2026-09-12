@@ -28,6 +28,13 @@
   but set `Secure` once HTTP is fully gone.
 - **First user is admin** (sees all audit rows). There is no user deletion
   yet — remove containers/volumes/rows manually if needed.
+- **Registration is open** (anyone who reaches the app gets a desktop).
+  Gate it (invite codes / disable endpoint) before any untrusted network.
+- **Share tokens live in URLs** (`#/s/...` for the page, `?token=` for the
+  proxied stream): they land in browser history and nginx access logs.
+  Treat share URLs as secrets; redact/tokenize logs before sharing them.
+- **No password change yet**; rotate by re-registering (documented follow-up
+  alongside user deletion).
 - **Suspend is `docker pause`** (RAM retained, zero CPU) — not encrypted
   hibernation. Snapshots are plain tarballs; encrypt at rest before R2.
 - **Single-user services (file-api, audio-ws) have no auth of their own**;
