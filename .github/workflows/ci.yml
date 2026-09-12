@@ -12,6 +12,7 @@ jobs:
 
       - name: Compose configs are valid
         run: |
+          cp .env.example .env
           docker compose config --quiet
           TUNNEL_TOKEN=dummy docker compose -f docker-compose.yml -f docker-compose.prod.yml config --quiet
 
