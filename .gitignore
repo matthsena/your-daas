@@ -229,3 +229,8 @@ tunnel-credentials.json
 
 # Local compose overrides with secrets
 docker-compose.override.yml
+
+# Control plane runtime (never commit)
+control-data/
+snapshots/
+*.db

@@ -5,7 +5,21 @@ export interface FileEntry {
   size: number;
 }
 
-const base = ""; // same origin: vite proxies in dev, nginx in prod. No prefix.
+// Control-plane prefix (e.g. "/u/alice") routing this client to one user's
+// computer through proxying. Legacy single-user mode keeps "".
+let ctlBase = "";
+export function setCtlBase(prefix: string) {
+  ctlBase = prefix;
+}
+
+function api(path: string): string {
+  return `${ctlBase}${path}`;
+}
+
+function audio(path: string): string {
+  const proto = window.location.protocol === "https:" ? "wss" : "ws";
+  return `${proto}://${window.location.host}${ctlBase}/audio/${path}`;
+}
 
 async function json<T>(res: Response): Promise<T> {
   if (!res.ok) {
@@ -16,17 +30,17 @@ async function json<T>(res: Response): Promise<T> {
 }
 
 export async function listFiles(path: string): Promise<{ path: string; entries: FileEntry[] }> {
-  const res = await fetch(`${base}/api/files?path=${encodeURIComponent(path)}`);
+  const res = await fetch(api(`/api/files?path=${encodeURIComponent(path)}`));
   return json(res);
 }
 
 export async function readFile(path: string): Promise<{ path: string; content: string }> {
-  const res = await fetch(`${base}/api/file?path=${encodeURIComponent(path)}`);
+  const res = await fetch(api(`/api/file?path=${encodeURIComponent(path)}`));
   return json(res);
 }
 
 export async function makeDir(path: string): Promise<void> {
-  const res = await fetch(`${base}/api/mkdir`, {
+  const res = await fetch(api(`/api/mkdir`), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ path }),
@@ -34,15 +48,47 @@ export async function makeDir(path: string): Promise<void> {
   await json(res);
 }
 
-export function desktopUrl(viewOnly: boolean): string {
+export function desktopUrl(viewOnly: boolean, base = "", token?: string): string {
   // Custom chromeless noVNC viewer (no popups/toolbar). Served by the container.
-  return `/novnc/yourdaas.html?view_only=${viewOnly ? "true" : "false"}`;
+  const q = `view_only=${viewOnly ? "true" : "false"}&base=${encodeURIComponent(base)}`
+    + (token ? `&token=${encodeURIComponent(token)}` : "");
+  return `${base}/novnc/yourdaas.html?${q}`;
+}
+
+export const REMOTE_HOME = "/home/user";
+export const REMOTE_DESKTOP = `${REMOTE_HOME}/Desktop`;
+
+export function uploadFile(
+  destPath: string,
+  file: Blob,
+  onProgress?: (loaded: number, total: number) => void,
+): Promise<void> {
+  // XHR (not fetch): only XHR reports upload progress.
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", api(`/api/upload?path=${encodeURIComponent(destPath)}`));
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress?.(e.loaded, e.total);
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) resolve();
+      else {
+        try {
+          const body = JSON.parse(xhr.responseText);
+          reject(new Error(body.error ?? `HTTP ${xhr.status}`));
+        } catch {
+          reject(new Error(`HTTP ${xhr.status}`));
+        }
+      }
+    };
+    xhr.onerror = () => reject(new Error("upload failed"));
+    xhr.send(file);
+  });
 }
 
 export function audioUrl(path: "out" | "mic"): string {
   // Duplex audio bridge (see docs/AUDIO.md). Same-origin WS via the proxy.
-  const proto = window.location.protocol === "https:" ? "wss" : "ws";
-  return `${proto}://${window.location.host}/audio/${path}`;
+  return audio(path);
 }
 
 export function audioUrlCandidates(path: "out" | "mic"): string[] {
@@ -87,12 +133,12 @@ export interface AudioDevice {
 }
 
 export async function listAudioDevices(): Promise<{ sinks: AudioDevice[]; sources: AudioDevice[] }> {
-  const res = await fetch(`${base}/api/audio/devices`);
+  const res = await fetch(api(`/api/audio/devices`));
   return json(res);
 }
 
 export async function setAudioVolume(kind: "sink" | "source", name: string, volume: number): Promise<void> {
-  const res = await fetch(`${base}/api/audio/volume`, {
+  const res = await fetch(api(`/api/audio/volume`), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ kind, name, volume }),
@@ -101,7 +147,7 @@ export async function setAudioVolume(kind: "sink" | "source", name: string, volu
 }
 
 export async function setAudioDefault(kind: "sink" | "source", name: string): Promise<void> {
-  const res = await fetch(`${base}/api/audio/default`, {
+  const res = await fetch(api(`/api/audio/default`), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ kind, name }),

@@ -81,9 +81,13 @@
         show.t = setTimeout(() => status.classList.remove("show"), 4000);
       };
 
-      // Websocket no mesmo origin (nginx/vite fazem proxy de /websockify).
+      // Websocket through the page's own path: same origin directly, or a
+      // control-plane prefix (/u/<user>) with an optional share token.
       const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-      const url = `${protocol}://${window.location.host}/websockify`;
+      const qbase = query("base", "");
+      const qtoken = query("token", "");
+      const url = `${protocol}://${window.location.host}${qbase}/websockify`
+        + (qtoken ? `?token=${encodeURIComponent(qtoken)}` : "");
 
       const rfb = new RFB(document.getElementById("screen"), url);
       rfb.viewOnly = flag("view_only");
@@ -138,7 +142,16 @@
       // api port tracks the viewer port +991 (local compose, default 6080->7071
       // or shifted but consistent overrides). Resolved once, awaited by callers.
       let apiBase = "";
+      // Every file-api call goes through here so share tokens ride along.
+      function apiUrl(path) {
+        const sep = path.includes("?") ? "&" : "?";
+        return `${apiBase}${path}${qtoken ? `${sep}token=${encodeURIComponent(qtoken)}` : ""}`;
+      }
       const apiReady = (async () => {
+        if (qbase) {
+          apiBase = qbase; // explicit control-plane prefix, no probing needed
+          return;
+        }
         const p = Number(window.location.port);
         const candidates = [""];
         candidates.push(`${window.location.protocol}//${window.location.hostname}:7071`);
@@ -194,7 +207,7 @@
         if (!rfbReady() || !text) return false;
         await apiReady;
         try {
-          const res = await fetch(`${apiBase}/api/clipboard/text`, {
+          const res = await fetch(apiUrl(`/api/clipboard/text`), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ text }),
@@ -260,7 +273,7 @@
                   return;
                 }
                 try {
-                  const up = await fetch(`${apiBase}/api/clipboard/image`, {
+                  const up = await fetch(apiUrl(`/api/clipboard/image`), {
                     method: "POST",
                     headers: { "Content-Type": "image/png" },
                     body: png,
@@ -414,7 +427,7 @@
         try {
           let st = null;
           try {
-            const res = await fetch(`${apiBase}/api/clipboard`, { signal: timeout });
+            const res = await fetch(apiUrl(`/api/clipboard`), { signal: timeout });
             if (!res.ok) return;
             st = await res.json();
           } catch {
@@ -434,7 +447,7 @@
             lastRemoteImg = st.hash;
             let blob = null;
             try {
-              const res = await fetch(`${apiBase}/api/clipboard/image`);
+              const res = await fetch(apiUrl(`/api/clipboard/image`));
               if (res.ok) blob = await res.blob();
             } catch {
               blob = null;
