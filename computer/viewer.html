@@ -125,25 +125,38 @@
         true,
       );
 
-      // ---- Two-way clipboard (text + images), no buttons needed ----
-      // Ctrl+C INSIDE Linux: x11vnc pushes the text via the RFB
-      // `clipboard` event and we write it straight to the PC clipboard
-      // (writes are allowed without a gesture in a secure context).
-      // Ctrl+V IN the viewer: the keydown counts as user activation, so we
-      // can read the PC clipboard and inject it into Linux (the browser
-      // asks permission only the first time).
-      // Images (both directions) go through the file-api X bridge
-      // (docs/CLIPBOARD.md): VNC clipboard is text-only.
+      // ---- Two-way clipboard (text + images), no buttons, no prompts ----
+      // The `paste` event carries data + gesture together, so Ctrl+V never
+      // calls clipboard.read()/readText() and never triggers a permission
+      // prompt. Remote content arrives via the file-api X bridge
+      // (docs/CLIPBOARD.md): VNC clipboard is text-only and lossy.
       const CTRL = 0xffe3;
       const KEY_V = 0x76;
       const clipView = document.getElementById("clipview");
       let lastRemote = "";
-      // file-api base: same host on :7071 in dev (viewer served on :6080),
-      // same-origin /api when proxied.
-      const apiBase = (() => {
-        const { protocol, hostname, port } = window.location;
-        if (port === "6080") return `${protocol}//${hostname}:7071`;
-        return "";
+      // file-api base: same-origin /api when proxied (production); else the
+      // api port tracks the viewer port +991 (local compose, default 6080->7071
+      // or shifted but consistent overrides). Resolved once, awaited by callers.
+      let apiBase = "";
+      const apiReady = (async () => {
+        const p = Number(window.location.port);
+        const candidates = [""];
+        candidates.push(`${window.location.protocol}//${window.location.hostname}:7071`);
+        if (Number.isFinite(p) && p > 0) {
+          candidates.push(`${window.location.protocol}//${window.location.hostname}:${p + 991}`);
+        }
+        for (const base of candidates) {
+          try {
+            const probe = await fetch(`${base}/api/health`);
+            if (probe.ok) {
+              apiBase = base;
+              return;
+            }
+          } catch {
+            /* try next candidate */
+          }
+        }
+        apiBase = "";
       })();
       let lastRemoteImg = "";
       let lastSeenTextHash = "";
@@ -179,6 +192,7 @@
       }
       async function postHostText(text) {
         if (!rfbReady() || !text) return false;
+        await apiReady;
         try {
           const res = await fetch(`${apiBase}/api/clipboard/text`, {
             method: "POST",
@@ -193,63 +207,80 @@
         sendRemotePaste();
         return true;
       }
-      // Ctrl+V with the viewer focused: read the PC clipboard and inject into Linux.
-      // preventDefault here keeps the `paste` handler below from double-pasting.
+      // Ctrl+V with the viewer focused: the data arrives via the `paste`
+      // event below, which carries the clipboard with the keypress gesture
+      // itself — no clipboard.read()/readText() call is needed, hence no
+      // permission prompt, ever. Here we only shield noVNC from the
+      // keystroke (stopPropagation, no double paste); the default action
+      // (firing `paste`) stays intact on purpose.
+      // If no paste event shows up (broken edge), fall back to readText once.
+      let pasteSeenAt = 0;
       window.addEventListener(
         "keydown",
-        async (event) => {
+        (event) => {
           if (rfb.viewOnly) return;
           if (!(event.ctrlKey || event.metaKey)) return;
           if (event.code !== "KeyV" || event.repeat) return;
-          event.preventDefault();
           event.stopPropagation();
-          // Images first: clipboard.read() needs this keydown gesture.
-          // No image (or denied) falls through to the text path below.
-          try {
-            if (navigator.clipboard?.read) {
-              const items = await navigator.clipboard.read();
-              for (const item of items) {
-                const type = item.types.find((t) => t.startsWith("image/"));
-                if (!type) continue;
-                const png = await toPng(await item.getType(type));
-                if (!png) continue;
-                if (png.size > 5 * 1024 * 1024) {
-                  show("image too large (5MB max)");
-                  return;
-                }
-                const up = await fetch(`${apiBase}/api/clipboard/image`, {
-                  method: "POST",
-                  headers: { "Content-Type": "image/png" },
-                  body: png,
-                });
-                if (!up.ok) continue;
-                lastSentImgHash = await sha1hex(await png.arrayBuffer());
-                show("image sent to Linux");
-                sendRemotePaste();
-                return;
-              }
+          const at = Date.now();
+          setTimeout(async () => {
+            if (pasteSeenAt >= at || rfb.viewOnly) return;
+            try {
+              const text = await navigator.clipboard?.readText();
+              if (await postHostText(text)) show("pasted into Linux");
+            } catch {
+              show("press Ctrl+V again or allow clipboard access");
             }
-          } catch {
-            /* denied/unavailable: fall through to text */
-          }
-          try {
-            const text = await navigator.clipboard?.readText();
-            if (await postHostText(text)) show("pasted into Linux");
-            else show("nothing to paste");
-          } catch {
-            void clipboardReadState().then((s) => {
-              if (s === "denied") showClipboardGuide();
-              else show("allow clipboard access and try again");
-            });
-          }
+          }, 800);
         },
         true,
       );
-      // Fallback for menu/gesture paste (when the keydown misses).
+      // Paste carries data + gesture together: text via getData, images via
+      // files — both without any permission prompt.
       window.addEventListener(
         "paste",
         (event) => {
           if (rfb.viewOnly) return;
+          pasteSeenAt = Date.now();
+          const files = event.clipboardData?.files;
+          if (files && files.length) {
+            for (const file of files) {
+              if (!file.type.startsWith("image/")) continue;
+              event.preventDefault();
+              event.stopPropagation();
+              void (async () => {
+                await apiReady;
+                const png = await toPng(file);
+                if (!png) {
+                  show("could not read image");
+                  return;
+                }
+                if (png.size > 5 * 1024 * 1024) {
+                  show("image too large (5MB max)");
+                  return;
+                }
+                try {
+                  const up = await fetch(`${apiBase}/api/clipboard/image`, {
+                    method: "POST",
+                    headers: { "Content-Type": "image/png" },
+                    body: png,
+                  });
+                  if (!up.ok) {
+                    show("could not send image");
+                    return;
+                  }
+                  lastSentImgHash = await sha1hex(await png.arrayBuffer());
+                  show("image sent to Linux");
+                  sendRemotePaste();
+                } catch {
+                  show("could not send image");
+                }
+              })();
+              return;
+            }
+            show("file transfer is not supported yet — images and text only");
+            return;
+          }
           const text =
             event.clipboardData?.getData("text/plain") ||
             event.clipboardData?.getData("text") ||
@@ -257,7 +288,7 @@
           if (!text) return;
           event.preventDefault();
           event.stopPropagation();
-          pasteHostText(text).then((ok) => {
+          postHostText(text).then((ok) => {
             if (ok) show("pasted into Linux");
           });
         },
@@ -377,6 +408,7 @@
       async function pollRemoteNow() {
         if (rfb.viewOnly || polling) return;
         polling = true;
+        await apiReady;
         const timeout =
           typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(8000) : undefined;
         try {
@@ -451,34 +483,6 @@
       });
       // Baseline immediately so the first interval tick can already act.
       void pollRemoteNow();
-      // Clipboard permission state: if the browser has it blocked, say so
-      // persistently (with the fix) instead of failing every Ctrl+V silently.
-      async function clipboardReadState() {
-        try {
-          const s = await navigator.permissions?.query({ name: "clipboard-read" });
-          return s?.state || "unknown";
-        } catch {
-          return "unknown";
-        }
-      }
-      function showClipboardGuide() {
-        clipView.innerHTML = "";
-        const p = document.createElement("div");
-        p.textContent =
-          "Clipboard is blocked: click the lock icon in the address bar, allow Clipboard, then reload the page.";
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.textContent = "dismiss";
-        btn.addEventListener("click", () => clipView.classList.remove("show"));
-        clipView.appendChild(p);
-        clipView.appendChild(btn);
-        clipView.classList.add("show");
-        clearTimeout(clipView.t);
-        clipView.t = setTimeout(() => clipView.classList.remove("show"), 20000);
-      }
-      void clipboardReadState().then((s) => {
-        if (s === "denied") showClipboardGuide();
-      });
     </script>
   </head>
   <body>

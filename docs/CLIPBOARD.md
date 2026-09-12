@@ -2,11 +2,12 @@
 
 ## How it flows
 
-- **PC → Linux (text)**: `Ctrl+V` keydown (the gesture) → `clipboard.read()`
-  for images, else `readText()` → `POST /api/clipboard/text` (exact UTF-8
-  into the X clipboard via xclip) → remote `Ctrl+V`. The `paste` DOM event
-  stays as fallback. noVNC's `clipboardPasteFrom` is deliberately NOT used:
-  it truncates to Latin-1 bytes, which drops accents.
+- **PC → Linux (text)**: `Ctrl+V` → the `paste` event carries data + gesture
+  together, so no `clipboard.read()`/`readText()` call and no permission
+  prompt, ever. Text goes `POST /api/clipboard/text` (exact UTF-8 via xclip)
+  → remote `Ctrl+V`. The keydown handler only shields noVNC from the
+  keystroke (no double paste) and arms a one-shot `readText()` fallback if
+  no paste event arrives within 800ms.
 - **Linux → PC (text)**: copy inside Linux → x11vnc pushes `ServerCutText`
   → the noVNC `clipboard` event acts only as a wake-up call (its payload is
   Latin-1-decoded bytes: accents mojibake, images arrive as binary garbage)
@@ -16,11 +17,10 @@
 
 ## Browser limits you must know
 
-- Clipboard **read** needs a user gesture + permission (granted once per
-  origin). First `Ctrl+V` may show a permission prompt — that is the browser,
-  not a bug.
-- Clipboard **write** without a gesture is rejected by Chrome; that is why
-  the `execCommand` attempt exists and why the panel is the last resort.
+- Clipboard **reads never prompt**: the host→remote path uses the `paste`
+  event (gesture-scoped by design). **Writes** without a gesture are rejected
+  by Chrome; that is why the `execCommand` attempt exists and why the panel
+  is the last resort.
 - Only text crosses. Images/files do not (roadmap).
 - The iframe **must** keep `allow="clipboard-read; clipboard-write"`.
 - Serve over a secure context (`127.0.0.1` counts; plain `http://lan-ip` does not).
@@ -47,12 +47,13 @@ VNC clipboard is text-only, so images travel on the file-api X bridge
   the X image). New hash → fetch PNG → `ClipboardItem` write; if the
   browser blocks the gestureless write, a transient panel shows a thumbnail
   + copy button (one click).
-- **PC → Linux:** `Ctrl+V` tries `clipboard.read()` for `image/*` first
-  (the keydown is the gesture; the browser asks once), normalizes to PNG
-  via canvas, POSTs to `/api/clipboard/image` (xclip owns the X selection),
-  then sends the remote `Ctrl+V`. No image (or denied) falls through to
-  the text path — the `paste` event still handles plain text.
+- **PC → Linux (images):** `Ctrl+V` → `paste` event `files[]` (no prompt)
+  → PNG normalize via canvas → `POST /api/clipboard/image` → remote `Ctrl+V`.
+  Non-image files get a "not supported yet" notice instead of silence.
 - Server notes: `xclip -i` forks to serve the selection while holding its
   fds, so the endpoint uses `Popen(..., DEVNULL)` + `communicate()` instead
   of `capture_output` (which hangs forever). `GET /api/clipboard/image`
   serves raw bytes with `Content-Type: image/png`.
+- The viewer finds the file-api as same-origin `/api` when proxied,
+  else `<viewer-host>:7071`, else `<viewer-port>+991` (local compose
+  overrides) — probed once at load, awaited by every call.
